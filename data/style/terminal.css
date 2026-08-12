@@ -1,0 +1,108 @@
+.terminal {
+  min-height: 92px;
+  margin: 12px 0 0;
+  overflow: auto;
+  border: 1px solid #222b38;
+  border-radius: 8px;
+  background: #070a0f;
+  color: #dce7f5;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.terminal-tall {
+  flex: 1;
+  min-height: 320px;
+  max-height: 420px;
+}
+
+.log-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.log-levels .checkline {
+  width: auto;
+  min-height: 30px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.55);
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.log-level-info {
+  color: var(--accent-strong);
+}
+
+.log-level-warn {
+  color: var(--warning);
+}
+
+.log-level-error {
+  color: var(--danger);
+}
+
+.tty-log-line {
+  display: block;
+  min-height: 0;
+  line-height: 1.35;
+}
+
+.tty-log-info {
+  color: #dce7f5;
+}
+
+.tty-log-warn {
+  color: var(--warning);
+}
+
+.tty-log-error {
+  color: var(--danger);
+}
+
+.stream-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(8, 12, 18, 0.55);
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stream-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(147, 161, 181, 0.12);
+}
+
+.stream-status-connected .stream-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(85, 214, 139, 0.14);
+}
+
+.stream-status-connecting .stream-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(246, 199, 102, 0.14);
+}
+
+.stream-status-fallback .stream-dot,
+.stream-status-error .stream-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(255, 107, 122, 0.14);
+}

@@ -1,0 +1,1444 @@
+openapi: 3.0.3
+info:
+  title: HID MacroPad API
+  version: 1.0.0
+  description: HTTP API for ESP32-S3 HID macro automation device.
+servers:
+  - url: http://hidpad-s3.local
+    description: Default mDNS hostname
+  - url: http://192.168.4.1
+    description: Default access point address
+tags:
+  - name: Status
+    description: Device state and profile list
+  - name: Profiles
+    description: Macro profile management
+  - name: Runtime
+    description: Macro execution
+  - name: Wi-Fi
+    description: Wi-Fi configuration
+  - name: BLE
+    description: HID transport and Bluetooth LE role configuration
+  - name: GPIO
+    description: Physical GPIO button bindings
+  - name: TTY
+    description: TTY command interface and log
+  - name: Observability
+    description: Firmware build info, uptime and runtime counters
+  - name: Update
+    description: Firmware and LittleFS update
+externalDocs:
+  description: TTY log WebSocket stream. Use ws://hidpad-s3.local:81/?token=<token> when TTY auth is enabled.
+  url: ws://hidpad-s3.local:81/
+paths:
+  /api/ping:
+    get:
+      tags:
+        - Status
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+
+  /api/status:
+    get:
+      tags:
+        - Status
+      summary: Get device status
+      operationId: getStatus
+      responses:
+        "200":
+          description: Current device state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+              examples:
+                online:
+                  value:
+                    ssid: OfficeWiFi
+                    host: hidpad-s3
+                    defaultProfile: admin
+                    wifiConnected: true
+                    wifiConnecting: false
+                    wifiApActive: false
+                    wifiStatus: 3
+                    wifiStatusText: connected
+                    wifiPasswordSet: true
+                    wifiSsidFound: true
+                    wifiRssi: -54
+                    wifiChannel: 6
+                    ttyAuthRequired: true
+                    hidTransport: ble
+                    bleMode: keyboard
+                    bleName: HIDPad S3 keyboard
+                    bleEnabled: true
+                    bleConnected: true
+                    blePairing: false
+                    bleBondsAvailable: true
+                    bleBonds:
+                      - AA:BB:CC:DD:EE:FF
+                    apIp: 0.0.0.0
+                    staIp: 192.168.1.120
+                    busy: false
+                    infinite: false
+                    repeatTarget: 1
+                    repeatDone: 0
+                    currentProfile: ""
+                    message: Ready
+                    profiles:
+                      - admin
+                      - terminal
+                    gpioBindings:
+                      - pin: 4
+                        profile: admin
+                        reserved: false
+                        enabled: true
+                        mode: hold
+
+  /api/observability:
+    get:
+      tags:
+        - Observability
+      summary: Get firmware observability data
+      operationId: getObservability
+      responses:
+        "200":
+          description: Firmware build info and runtime counters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservabilityResponse"
+              example:
+                ok: true
+                data:
+                  firmwareVersion: 0.5.1
+                  buildDate: Jun 15 2026
+                  buildTime: "12:30:00"
+                  uptimeMs: 123456
+                  chipModel: ESP32-S3
+                  chipRevision: 0
+                  cpuFreqMhz: 160
+                  sdkVersion: v4.4.7
+                  flashSizeBytes: 4194304
+                  sketchSizeBytes: 1463104
+                  freeSketchSpaceBytes: 1572864
+                  heapTotalBytes: 327680
+                  heapFreeBytes: 212000
+                  heapMinFreeBytes: 180000
+                  heapMaxAllocBytes: 110000
+                  filesystemReady: true
+                  filesystemTotalBytes: 983040
+                  filesystemUsedBytes: 126976
+                  apiErrors: 2
+                  wifiReconnects: 4
+                  macroStarts: 7
+                  profileCount: 5
+                  gpioBindingCount: 2
+                  host: hidpad-s3
+                  defaultProfile: admin
+                  ttyAuthRequired: true
+                  wifiConnected: true
+                  wifiConnecting: false
+                  wifiApActive: false
+                  wifiStatusText: connected
+                  wifiRssi: -54
+                  wifiChannel: 6
+                  apIp: 0.0.0.0
+                  staIp: 192.168.1.120
+                  hidTransport: ble
+                  bleMode: keyboard
+                  bleName: HIDPad S3 keyboard
+                  bleEnabled: true
+                  bleConnected: true
+                  blePairing: false
+                  bleBondCount: 1
+                  macroBusy: false
+                  currentProfile: ""
+                  ttyLogLevels: INFO,WARN,ERROR
+
+  /api/profile/load:
+    get:
+      tags:
+        - Profiles
+      summary: Load a macro profile
+      operationId: loadProfile
+      parameters:
+        - $ref: "#/components/parameters/ProfileNameQuery"
+      responses:
+        "200":
+          description: Profile script
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileLoadResponse"
+              example:
+                ok: true
+                data:
+                  name: admin
+                  script: |
+                    TEXT hello
+                    KEY ENTER
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/profile/save:
+    post:
+      tags:
+        - Profiles
+      summary: Save a macro profile
+      operationId: saveProfile
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - name
+                - script
+              properties:
+                name:
+                  $ref: "#/components/schemas/ProfileName"
+                script:
+                  type: string
+                  description: Macro script body. Comment lines starting with "#", ";" or "//" are preserved.
+                  example: |
+                    # Run git status
+                    TEXT git status
+                    KEY ENTER
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/ProfileSaveFailed"
+
+  /api/profile/export:
+    get:
+      tags:
+        - Profiles
+      summary: Export all macro profiles
+      operationId: exportProfiles
+      responses:
+        "200":
+          description: Exported profile bundle
+          headers:
+            Content-Disposition:
+              description: Suggested filename for browser downloads.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileExportResponse"
+
+  /api/profile/import:
+    post:
+      tags:
+        - Profiles
+      summary: Import macro profiles
+      operationId: importProfiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileBundle"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/ProfileSaveFailed"
+
+  /api/profile/delete:
+    post:
+      tags:
+        - Profiles
+      summary: Delete a macro profile
+      operationId: deleteProfile
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  $ref: "#/components/schemas/ProfileName"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/ProfileDeleteFailed"
+
+  /api/run:
+    post:
+      tags:
+        - Runtime
+      summary: Run a macro profile
+      operationId: runProfile
+      description: If name is empty, the device runs the configured default profile. Repeats are controlled by REPEAT or LOOP blocks inside the macro script.
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                name:
+                  $ref: "#/components/schemas/ProfileName"
+      responses:
+        "200":
+          description: Macro execution started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+              example:
+                ok: true
+                data:
+                  status: started
+                  profile: admin
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/ProfileNotFound"
+        "409":
+          $ref: "#/components/responses/MacroBusy"
+
+  /api/run/script:
+    post:
+      tags:
+        - Runtime
+      summary: Run a draft macro script
+      operationId: runDraftScript
+      description: Runs the script body from the editor without saving it as a profile. Repeats are controlled by REPEAT or LOOP blocks inside the macro script.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - script
+              properties:
+                name:
+                  $ref: "#/components/schemas/ProfileName"
+                script:
+                  type: string
+                  description: Macro script body. Comment lines starting with "#", ";" or "//" are ignored during execution.
+                  example: |
+                    # Test draft
+                    REPEAT 3
+                      TEXT test
+                      KEY ENTER
+                    END
+      responses:
+        "200":
+          description: Draft macro execution started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+              example:
+                ok: true
+                data:
+                  status: started
+                  profile: draft
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/MacroBusy"
+
+  /api/stop:
+    post:
+      tags:
+        - Runtime
+      summary: Stop the running macro
+      operationId: stopMacro
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "409":
+          $ref: "#/components/responses/MacroNotRunning"
+
+  /api/wifi/save:
+    post:
+      tags:
+        - Wi-Fi
+      summary: Save Wi-Fi configuration
+      operationId: saveWifi
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                hostname:
+                  type: string
+                  description: Device hostname. Empty value falls back to hidpad-s3.
+                  example: hidpad-s3
+                ssid:
+                  type: string
+                  description: Wi-Fi network SSID.
+                  example: OfficeWiFi
+                pass:
+                  type: string
+                  format: password
+                  description: Wi-Fi network password.
+                  example: secret-password
+                defaultProfile:
+                  $ref: "#/components/schemas/ProfileName"
+                ttyPass:
+                  type: string
+                  format: password
+                  description: Optional new TTY password. Omit to keep current value, send an empty value to disable TTY auth.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "500":
+          $ref: "#/components/responses/ConfigSaveFailed"
+
+  /api/wifi/reset:
+    post:
+      tags:
+        - Wi-Fi
+      summary: Reset saved Wi-Fi credentials
+      operationId: resetWifi
+      description: Clears saved SSID and password. The device will use AP and captive portal as setup fallback.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "500":
+          $ref: "#/components/responses/ConfigSaveFailed"
+
+  /api/ble/save:
+    post:
+      tags:
+        - BLE
+      summary: Save HID transport and BLE settings
+      operationId: saveBleSettings
+      description: >-
+        Saves the HID transport and schedules a device restart. USB always exposes keyboard and mouse.
+        BLE exposes only the selected role, so its HID report map must be recreated after a mode change.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - transport
+                - mode
+              properties:
+                transport:
+                  type: string
+                  enum: [usb, ble]
+                mode:
+                  type: string
+                  enum: [keyboard, mouse]
+                  description: Used as the BLE role. For USB the firmware exposes keyboard and mouse regardless of this value.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/ConfigSaveFailed"
+
+  /api/ble/bond/delete:
+    post:
+      tags:
+        - BLE
+      summary: Delete one saved BLE bond
+      operationId: deleteBleBond
+      description: Deletes the bond from ESP32-S3 storage. The peer should also forget the device before pairing again.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - address
+              properties:
+                address:
+                  type: string
+                  pattern: "^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"
+                  example: AA:BB:CC:DD:EE:FF
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          description: BLE transport is not active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Bond deletion failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/ble/bonds/clear:
+    post:
+      tags:
+        - BLE
+      summary: Delete all saved BLE bonds
+      operationId: clearBleBonds
+      description: Deletes every BLE bond from ESP32-S3 storage. BLE transport must be active.
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "409":
+          description: BLE transport is not active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Clearing the bond database failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/gpio/save:
+    post:
+      tags:
+        - GPIO
+      summary: Save a GPIO button binding
+      operationId: saveGpioBinding
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - pin
+                - profile
+              properties:
+                pin:
+                  type: integer
+                  minimum: 1
+                  maximum: 48
+                  description: GPIO pin. Current firmware accepts only GPIO 4..10 for button bindings.
+                  example: 4
+                profile:
+                  type: string
+                  description: Existing macro profile name or the reserved STOP command.
+                  example: STOP
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/GpioConfigFailed"
+
+  /api/gpio/delete:
+    post:
+      tags:
+        - GPIO
+      summary: Delete a GPIO button binding
+      operationId: deleteGpioBinding
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - pin
+              properties:
+                pin:
+                  type: integer
+                  minimum: 0
+                  maximum: 255
+                  description: GPIO pin number to remove. Meaningful values are the pins previously saved by /api/gpio/save.
+                  example: 4
+      responses:
+        "200":
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/GpioConfigFailed"
+
+  /api/tty/exec:
+    post:
+      tags:
+        - TTY
+      summary: Execute a TTY command
+      operationId: execTty
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - cmd
+              properties:
+                cmd:
+                  type: string
+                  description: TTY command line.
+                  example: HELP
+                token:
+                  type: string
+                  description: TTY access token. Required when TTY auth is enabled.
+      responses:
+        "200":
+          description: Command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TtyExecResponse"
+              example:
+                ok: true
+                data:
+                  output: PONG
+        "401":
+          $ref: "#/components/responses/TtyUnauthorized"
+
+  /api/tty/log:
+    get:
+      tags:
+        - TTY
+      summary: Get TTY log
+      description: Compatibility endpoint. The web UI uses the WebSocket stream on port 81 for live log updates.
+      operationId: getTtyLog
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: TTY access token. Required when TTY auth is enabled.
+      responses:
+        "200":
+          description: TTY log buffer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TtyLogResponse"
+              example:
+                ok: true
+                data:
+                  log: |
+                    wifi config updated
+                    run profile: admin
+        "401":
+          $ref: "#/components/responses/TtyUnauthorized"
+
+  /api/update/firmware:
+    post:
+      tags:
+        - Update
+      summary: Upload firmware image
+      operationId: updateFirmware
+      parameters:
+        - name: X-Update-Size
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: Size of firmware.bin in bytes.
+        - name: X-Restart-After-Update
+          in: header
+          required: false
+          schema:
+            type: string
+            enum:
+              - "0"
+              - "1"
+          description: Send "0" when firmware is uploaded as the first step of a firmware+filesystem update session.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Firmware image accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateDoneResponse"
+              example:
+                ok: true
+                data:
+                  message: Firmware updated.
+                  restart: false
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/UpdateFailed"
+
+  /api/update/filesystem:
+    post:
+      tags:
+        - Update
+      summary: Upload LittleFS image
+      operationId: updateFilesystem
+      parameters:
+        - name: X-Update-Size
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: Size of littlefs.bin in bytes.
+        - name: X-Restart-After-Update
+          in: header
+          required: false
+          schema:
+            type: string
+            enum:
+              - "0"
+              - "1"
+          description: Send "1" or omit to restart after successful filesystem update.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Filesystem image accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateDoneResponse"
+              example:
+                ok: true
+                data:
+                  message: Filesystem updated. Device will restart.
+                  restart: true
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "500":
+          $ref: "#/components/responses/UpdateFailed"
+
+  /api/update/progress:
+    get:
+      tags:
+        - Update
+      summary: Get update progress
+      operationId: getUpdateProgress
+      responses:
+        "200":
+          description: Current update progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateProgressResponse"
+
+components:
+  parameters:
+    ProfileNameQuery:
+      name: name
+      in: query
+      required: true
+      schema:
+        $ref: "#/components/schemas/ProfileName"
+      description: Macro profile name.
+
+  schemas:
+    ProfileName:
+      type: string
+      pattern: "^[A-Za-z0-9_-]+$"
+      description: Strict profile name. Only ASCII letters, digits, underscore and hyphen are accepted; invalid names are rejected instead of sanitized.
+      example: admin
+
+    Status:
+      type: object
+      required:
+        - ssid
+        - host
+        - defaultProfile
+        - wifiConnected
+        - wifiConnecting
+        - wifiApActive
+        - wifiStatus
+        - wifiStatusText
+        - wifiPasswordSet
+        - wifiSsidFound
+        - wifiRssi
+        - wifiChannel
+        - ttyAuthRequired
+        - hidTransport
+        - bleMode
+        - bleName
+        - bleEnabled
+        - bleConnected
+        - blePairing
+        - bleBondsAvailable
+        - bleBonds
+        - apIp
+        - staIp
+        - busy
+        - infinite
+        - repeatTarget
+        - repeatDone
+        - currentProfile
+        - message
+        - profiles
+        - gpioBindings
+      properties:
+        ssid:
+          type: string
+          description: Configured Wi-Fi SSID.
+        host:
+          type: string
+          description: Device hostname.
+        defaultProfile:
+          type: string
+          description: Default profile name.
+        wifiConnected:
+          type: boolean
+          description: True when station mode is connected.
+        wifiConnecting:
+          type: boolean
+          description: True while station mode is connecting.
+        wifiApActive:
+          type: boolean
+          description: True when setup/fallback access point is active.
+        wifiStatus:
+          type: integer
+          minimum: 0
+          description: Raw Arduino Wi-Fi status code.
+        wifiStatusText:
+          type: string
+          description: Normalized Wi-Fi status text.
+        wifiPasswordSet:
+          type: boolean
+          description: True when a non-empty Wi-Fi password is stored.
+        wifiSsidFound:
+          type: boolean
+          description: True when the last scan found the configured SSID.
+        wifiRssi:
+          type: integer
+          description: RSSI from the last matching Wi-Fi scan result.
+        wifiChannel:
+          type: integer
+          minimum: 0
+          description: Channel from the last matching Wi-Fi scan result.
+        ttyAuthRequired:
+          type: boolean
+          description: True when TTY endpoints and TTY WebSocket require a token.
+        hidTransport:
+          type: string
+          enum: [usb, ble]
+          description: Active HID transport.
+        bleMode:
+          type: string
+          enum: [keyboard, mouse]
+          description: Configured BLE role. USB always supports keyboard and mouse together.
+        bleName:
+          type: string
+          enum: [HIDPad S3 keyboard, HIDPad S3 mouse]
+          description: BLE advertising and Device Information model name derived from bleMode.
+        bleEnabled:
+          type: boolean
+          description: True when the active HID transport is BLE.
+        bleConnected:
+          type: boolean
+          description: True when a BLE host is connected.
+        blePairing:
+          type: boolean
+          description: True while a BLE host is pairing or authenticating.
+        bleBondsAvailable:
+          type: boolean
+          description: True when BLE is active and the saved bond database can be managed.
+        bleBonds:
+          type: array
+          description: Saved BLE peer addresses. Empty when no bonds exist or BLE is inactive.
+          items:
+            type: string
+            pattern: "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$"
+        apIp:
+          type: string
+          format: ipv4
+          description: Access point IP address.
+        staIp:
+          type: string
+          format: ipv4
+          description: Station mode IP address.
+        busy:
+          type: boolean
+          description: True while a macro is running.
+        infinite:
+          type: boolean
+          description: True when the current macro is inside a LOOP block.
+        repeatTarget:
+          type: integer
+          minimum: 0
+          description: Whole-script run target. Internal REPEAT blocks are defined in the script text.
+        repeatDone:
+          type: integer
+          minimum: 0
+          description: Completed whole-script run count for the current macro.
+        currentProfile:
+          type: string
+          description: Current running profile name.
+        message:
+          type: string
+          description: Macro engine status message.
+        profiles:
+          type: array
+          description: Saved profile names.
+          items:
+            type: string
+        gpioBindings:
+          type: array
+          description: GPIO button bindings.
+          items:
+            $ref: "#/components/schemas/GpioBinding"
+
+    ApiError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+              example: invalid_profile_name
+            message:
+              type: string
+              description: Human-readable error message.
+              example: Profile name is required
+
+    OkResponse:
+      type: object
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+          description: Successful operation marker.
+
+    ProfileLoadResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - name
+                - script
+              properties:
+                name:
+                  type: string
+                script:
+                  type: string
+
+    ProfileBundle:
+      type: object
+      required:
+        - version
+        - profiles
+      properties:
+        version:
+          type: integer
+          enum:
+            - 1
+        profiles:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+              - script
+            properties:
+              name:
+                $ref: "#/components/schemas/ProfileName"
+              script:
+                type: string
+                description: Macro script body. Comment lines starting with "#", ";" or "//" are preserved.
+
+    ProfileExportResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              $ref: "#/components/schemas/ProfileBundle"
+
+    RunResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - status
+                - profile
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - started
+                profile:
+                  type: string
+
+    GpioBinding:
+      type: object
+      required:
+        - pin
+        - profile
+        - reserved
+        - enabled
+        - mode
+      properties:
+        pin:
+          type: integer
+          minimum: 1
+          maximum: 48
+        profile:
+          type: string
+          description: Macro profile name or reserved STOP command.
+        reserved:
+          type: boolean
+          description: True for the built-in STOP command binding. Reserved bindings cannot be deleted.
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          description: GPIO binding behavior.
+          enum:
+            - hold
+            - stop
+
+    TtyExecResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - output
+              properties:
+                output:
+                  type: string
+
+    TtyLogResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - log
+              properties:
+                log:
+                  type: string
+
+    UpdateDoneResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - message
+                - restart
+              properties:
+                message:
+                  type: string
+                restart:
+                  type: boolean
+
+    ObservabilityResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - firmwareVersion
+                - buildDate
+                - buildTime
+                - uptimeMs
+                - chipModel
+                - chipRevision
+                - cpuFreqMhz
+                - sdkVersion
+                - flashSizeBytes
+                - sketchSizeBytes
+                - freeSketchSpaceBytes
+                - heapTotalBytes
+                - heapFreeBytes
+                - heapMinFreeBytes
+                - heapMaxAllocBytes
+                - filesystemReady
+                - filesystemTotalBytes
+                - filesystemUsedBytes
+                - apiErrors
+                - wifiReconnects
+                - macroStarts
+                - profileCount
+                - gpioBindingCount
+                - host
+                - defaultProfile
+                - ttyAuthRequired
+                - wifiConnected
+                - wifiConnecting
+                - wifiApActive
+                - wifiStatusText
+                - wifiRssi
+                - wifiChannel
+                - apIp
+                - staIp
+                - hidTransport
+                - bleMode
+                - bleName
+                - bleEnabled
+                - bleConnected
+                - blePairing
+                - bleBondCount
+                - macroBusy
+                - currentProfile
+                - ttyLogLevels
+              properties:
+                firmwareVersion:
+                  type: string
+                buildDate:
+                  type: string
+                buildTime:
+                  type: string
+                uptimeMs:
+                  type: integer
+                  minimum: 0
+                chipModel:
+                  type: string
+                chipRevision:
+                  type: integer
+                cpuFreqMhz:
+                  type: integer
+                  minimum: 0
+                sdkVersion:
+                  type: string
+                flashSizeBytes:
+                  type: integer
+                  minimum: 0
+                sketchSizeBytes:
+                  type: integer
+                  minimum: 0
+                freeSketchSpaceBytes:
+                  type: integer
+                  minimum: 0
+                heapTotalBytes:
+                  type: integer
+                  minimum: 0
+                heapFreeBytes:
+                  type: integer
+                  minimum: 0
+                heapMinFreeBytes:
+                  type: integer
+                  minimum: 0
+                heapMaxAllocBytes:
+                  type: integer
+                  minimum: 0
+                filesystemReady:
+                  type: boolean
+                filesystemTotalBytes:
+                  type: integer
+                  minimum: 0
+                filesystemUsedBytes:
+                  type: integer
+                  minimum: 0
+                apiErrors:
+                  type: integer
+                  minimum: 0
+                wifiReconnects:
+                  type: integer
+                  minimum: 0
+                macroStarts:
+                  type: integer
+                  minimum: 0
+                profileCount:
+                  type: integer
+                  minimum: 0
+                gpioBindingCount:
+                  type: integer
+                  minimum: 0
+                host:
+                  type: string
+                defaultProfile:
+                  type: string
+                ttyAuthRequired:
+                  type: boolean
+                wifiConnected:
+                  type: boolean
+                wifiConnecting:
+                  type: boolean
+                wifiApActive:
+                  type: boolean
+                wifiStatusText:
+                  type: string
+                wifiRssi:
+                  type: integer
+                wifiChannel:
+                  type: integer
+                  minimum: 0
+                apIp:
+                  type: string
+                  format: ipv4
+                staIp:
+                  type: string
+                  format: ipv4
+                hidTransport:
+                  type: string
+                  enum: [usb, ble]
+                bleMode:
+                  type: string
+                  enum: [keyboard, mouse]
+                bleName:
+                  type: string
+                bleEnabled:
+                  type: boolean
+                bleConnected:
+                  type: boolean
+                blePairing:
+                  type: boolean
+                bleBondCount:
+                  type: integer
+                  minimum: 0
+                macroBusy:
+                  type: boolean
+                currentProfile:
+                  type: string
+                ttyLogLevels:
+                  type: string
+
+    UpdateProgressResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - inProgress
+                - completed
+                - type
+                - totalSize
+                - writtenSize
+                - percentage
+              properties:
+                inProgress:
+                  type: boolean
+                completed:
+                  type: boolean
+                type:
+                  type: string
+                  enum:
+                    - firmware
+                    - filesystem
+                totalSize:
+                  type: integer
+                  minimum: 0
+                writtenSize:
+                  type: integer
+                  minimum: 0
+                percentage:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                error:
+                  type: string
+
+  responses:
+    Ok:
+      description: Operation completed successfully
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OkResponse"
+          example:
+            ok: true
+
+    InvalidRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: invalid_profile_name
+              message: Profile name is required
+
+    NotFound:
+      description: Resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: profile_not_found
+              message: Profile was not found
+
+    ProfileNotFound:
+      description: Profile was not found or has an empty script
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: profile_not_found
+              message: Profile was not found or has an empty script
+
+    ProfileSaveFailed:
+      description: Profile save failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: profile_save_failed
+              message: Profile save failed
+
+    ProfileDeleteFailed:
+      description: Profile delete failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: profile_delete_failed
+              message: Profile delete failed
+
+    ConfigSaveFailed:
+      description: Configuration save failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: config_save_failed
+              message: Configuration save failed
+
+    UpdateFailed:
+      description: Firmware or filesystem update failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: update_failed
+              message: Update write failed
+
+    MacroBusy:
+      description: Macro engine is already busy
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: macro_busy
+              message: Macro engine is busy
+
+    MacroNotRunning:
+      description: Macro engine is not running
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: macro_not_running
+              message: Macro engine is not running
+
+    TtyUnauthorized:
+      description: TTY access token is missing or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: tty_unauthorized
+              message: TTY token is invalid
+
+    GpioConfigFailed:
+      description: GPIO configuration operation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: gpio_config_failed
+              message: GPIO configuration operation failed

@@ -1,0 +1,369 @@
+main {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status-grid,
+.row {
+  display: grid;
+  gap: 14px;
+}
+
+.page-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.tab-button {
+  width: auto;
+  min-width: 112px;
+  min-height: 38px;
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  color: var(--soft);
+}
+
+.tab-button.active {
+  border-color: rgba(139, 233, 253, 0.52);
+  background: #173042;
+  color: var(--text);
+}
+
+.app-page {
+  display: none;
+}
+
+.app-page.active {
+  display: block;
+}
+
+.status-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.row {
+  grid-template-columns: minmax(290px, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
+}
+
+.tty-layout {
+  align-items: stretch;
+}
+
+.tty-layout .panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.control-row {
+  grid-template-columns: 1fr;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(280px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.update-actions-panel {
+  grid-column: 1 / -1;
+}
+
+.settings-metrics {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-metrics > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.55);
+  padding: 12px;
+}
+
+.settings-metrics strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.gpio-table {
+  display: grid;
+  gap: 8px;
+}
+
+.gpio-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 110px;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.55);
+  padding: 10px 12px;
+}
+
+.gpio-row-button {
+  width: 100%;
+  border-color: var(--line);
+  background: rgba(8, 12, 18, 0.55);
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+}
+
+.gpio-row-button:hover {
+  border-color: var(--accent);
+  filter: none;
+}
+
+.gpio-row span {
+  overflow-wrap: anywhere;
+}
+
+.gpio-row-head {
+  min-height: 34px;
+  background: rgba(23, 48, 66, 0.7);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.gpio-empty {
+  color: var(--soft);
+}
+
+.bond-list {
+  display: grid;
+  gap: 8px;
+}
+
+.bond-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.55);
+  padding: 8px 10px 8px 12px;
+}
+
+.bond-row code {
+  overflow-wrap: anywhere;
+}
+
+.bond-remove-button,
+.bond-clear-button {
+  width: auto;
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+.bond-empty {
+  color: var(--soft);
+  padding: 8px 0;
+}
+
+.metric,
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 20, 29, 0.88);
+  box-shadow: var(--shadow);
+}
+
+.metric {
+  min-height: 82px;
+  padding: 15px;
+}
+
+.metric-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.panel {
+  margin: 0 0 14px;
+  padding: 16px;
+}
+
+.panel-title,
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title {
+  margin-bottom: 16px;
+}
+
+.panel-title h2,
+.modal-header h2 {
+  margin-bottom: 0;
+}
+
+.compact {
+  margin-top: 0;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 132px;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 13px;
+  background: rgba(16, 20, 29, 0.78);
+  color: var(--soft);
+  box-shadow: var(--shadow);
+  font-weight: 700;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(147, 161, 181, 0.12);
+}
+
+.status-online .status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(85, 214, 139, 0.16);
+}
+
+.status-ap .status-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(246, 199, 102, 0.16);
+}
+
+.status-error .status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(255, 107, 122, 0.16);
+}
+
+#toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(420px, calc(100% - 36px));
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #141a24;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  padding: 12px 14px;
+}
+
+#toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#toast.error {
+  border-color: rgba(255, 107, 122, 0.55);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 20;
+}
+
+.modal.open {
+  display: block;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.modal-dialog {
+  position: relative;
+  width: min(720px, calc(100% - 28px));
+  max-height: min(760px, calc(100vh - 28px));
+  overflow: auto;
+  margin: 14px auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10141d;
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.modal-body {
+  margin-top: 14px;
+}
+
+.modal-body h3 {
+  margin: 18px 0 10px;
+}
+
+.modal-body h3:first-child {
+  margin-top: 0;
+}
+
+.help-list {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.45fr) minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0;
+}
+
+.help-list dt {
+  color: var(--accent-strong);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  font-weight: 700;
+}
+
+.help-list dd {
+  margin: 0;
+  color: var(--soft);
+}

@@ -1,0 +1,4 @@
+KEY CTRL ALT T
+DELAY 500
+TEXT echo HID MacroPad ready
+KEY ENTER

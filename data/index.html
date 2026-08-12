@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>HIDPad Control</title>
+    <link rel="stylesheet" href="style/theme.css" />
+    <link rel="stylesheet" href="style/layout.css" />
+    <link rel="stylesheet" href="style/forms.css" />
+    <link rel="stylesheet" href="style/terminal.css" />
+    <link rel="stylesheet" href="style/responsive.css" />
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ESP32-S3 HID automation</p>
+          <h1>HID MacroPad Control</h1>
+        </div>
+        <div id="state" class="status-badge status-idle">
+          <span class="status-dot"></span>
+          loading...
+        </div>
+      </header>
+
+      <nav class="page-tabs" aria-label="Main sections">
+        <button id="controlPageBtn" class="tab-button active" type="button">Control</button>
+        <button id="ttyPageBtn" class="tab-button" type="button">TTY</button>
+        <button id="gpioPageBtn" class="tab-button" type="button">GPIO</button>
+        <button id="wifiPageBtn" class="tab-button" type="button">Wi-Fi</button>
+        <button id="blePageBtn" class="tab-button" type="button">HID / BLE</button>
+        <button id="settingsPageBtn" class="tab-button" type="button">Settings</button>
+        <button id="observabilityPageBtn" class="tab-button" type="button">Observe</button>
+        <button id="updatePageBtn" class="tab-button" type="button">Update</button>
+      </nav>
+
+      <section class="status-grid" aria-label="Device status">
+        <div class="metric">
+          <span class="metric-label">Access point</span>
+          <strong id="ap">-</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Station IP</span>
+          <strong id="sta">-</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">HID mode</span>
+          <strong id="hidMode">-</strong>
+        </div>
+        <div class="metric metric-wide">
+          <span class="metric-label">Macro state</span>
+          <strong id="macro">-</strong>
+        </div>
+      </section>
+
+      <section id="controlPage" class="app-page active">
+        <div class="row control-row">
+          <section class="panel">
+          <div class="panel-title">
+            <h2>Profiles</h2>
+            <button
+              id="macroHelpBtn"
+              class="icon-button"
+              type="button"
+              aria-label="Macro help"
+              title="Macro help"
+            >
+              ?
+            </button>
+          </div>
+          <label for="name">Profile name</label>
+          <input
+            id="name"
+            placeholder="new_profile"
+            autocomplete="off"
+            pattern="[A-Za-z0-9_\-]+"
+            title="Use only A-Z, a-z, 0-9, underscore and dash. Spaces are not allowed."
+          />
+          <label for="profiles">Saved profiles</label>
+          <select id="profiles"></select>
+          <label for="script">Macro script</label>
+          <div class="macro-editor" id="macroEditor">
+            <pre class="macro-lines" id="scriptLines" aria-hidden="true">1</pre>
+            <div class="macro-code">
+              <pre class="macro-highlight" id="scriptHighlight" aria-hidden="true"></pre>
+              <textarea id="script" spellcheck="false"></textarea>
+              <div id="macroSuggest" class="macro-suggest" role="listbox" aria-label="Macro suggestions"></div>
+            </div>
+          </div>
+          <div id="macroValidation" class="macro-validation" aria-live="polite"></div>
+          <div class="actions">
+            <button id="saveProfileBtn" class="button-primary">Save</button>
+            <button id="testScriptBtn" class="button-success">Test</button>
+            <button id="runProfileBtn" class="button-success" type="button">Run saved</button>
+            <button id="stopProfileBtn" class="button-warning" type="button">Stop</button>
+            <button id="exportProfilesBtn" class="button-io" type="button">Export</button>
+            <button id="importProfilesBtn" class="button-io" type="button">Import</button>
+            <button id="deleteProfileBtn" class="button-danger">Delete</button>
+          </div>
+          <input id="importProfilesFile" class="file-input-hidden" type="file" accept="application/json,.json" />
+          </section>
+        </div>
+      </section>
+
+      <section id="ttyPage" class="app-page">
+        <div class="row tty-layout">
+          <section class="panel">
+            <div class="panel-title">
+              <h2>TTY command</h2>
+              <button
+                id="ttyHelpBtn"
+                class="icon-button"
+                type="button"
+                aria-label="TTY help"
+                title="TTY help"
+              >
+                ?
+              </button>
+            </div>
+            <label for="ttyToken">Access token</label>
+            <input
+              id="ttyToken"
+              type="password"
+              placeholder="Required when TTY auth is enabled"
+              autocomplete="current-password"
+            />
+            <label for="ttyCmd">Command</label>
+            <input
+              id="ttyCmd"
+              placeholder="RUN hello | LINE KEY CTRL ALT T | HELP"
+              autocomplete="off"
+            />
+            <button id="execTtyBtn" class="button-primary" type="button">Send command</button>
+            <pre id="ttyOut" class="terminal"></pre>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>TTY log stream</h2>
+              <div id="ttyLogStatus" class="stream-status stream-status-idle">
+                <span class="stream-dot"></span>
+                disconnected
+              </div>
+            </div>
+            <div class="log-levels" aria-label="TTY log level filters">
+              <label class="checkline log-level-info" for="ttyLogInfo">
+                <input id="ttyLogInfo" type="checkbox" checked />
+                INFO
+              </label>
+              <label class="checkline log-level-warn" for="ttyLogWarn">
+                <input id="ttyLogWarn" type="checkbox" checked />
+                WARN
+              </label>
+              <label class="checkline log-level-error" for="ttyLogError">
+                <input id="ttyLogError" type="checkbox" checked />
+                ERROR
+              </label>
+            </div>
+            <pre id="ttyLog" class="terminal terminal-tall"></pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="gpioPage" class="app-page">
+        <div class="settings-layout">
+          <section class="panel">
+            <h2>GPIO binding</h2>
+            <label for="gpioPin">GPIO pin</label>
+            <select id="gpioPin">
+              <option value="4">GPIO 4</option>
+              <option value="5">GPIO 5</option>
+              <option value="6">GPIO 6</option>
+              <option value="7">GPIO 7</option>
+              <option value="8">GPIO 8</option>
+              <option value="9">GPIO 9</option>
+              <option value="10">GPIO 10</option>
+            </select>
+
+            <label for="gpioProfile">Profile / command</label>
+            <select id="gpioProfile"></select>
+
+            <div class="actions actions-secondary">
+              <button id="gpioAssignBtn" class="button-primary" type="button">Assign</button>
+              <button id="gpioClearBtn" type="button" class="button-danger">Clear</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Assigned GPIO</h2>
+            <div id="gpioBindings" class="gpio-table" aria-label="GPIO profile bindings">
+              <div class="gpio-row gpio-row-head">
+                <span>Pin</span>
+                <span>Profile</span>
+                <span>Behavior</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="wifiPage" class="app-page">
+        <div class="settings-layout">
+          <section class="panel">
+            <h2>Wi-Fi settings</h2>
+            <label for="ssid">SSID</label>
+            <input id="ssid" placeholder="Network name" autocomplete="off" />
+            <label for="pass">Password</label>
+            <input
+              id="pass"
+              type="password"
+              placeholder="Wi-Fi password"
+              autocomplete="new-password"
+              minlength="8"
+              maxlength="63"
+            />
+            <div class="actions actions-secondary">
+              <button id="saveWifiBtn" class="button-primary" type="button">Save Wi-Fi</button>
+              <button id="resetWifiBtn" class="button-danger" type="button">Reset Wi-Fi</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Network state</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Saved SSID</span>
+                <strong id="settingsSsid">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Connection</span>
+                <strong id="settingsWifiConnection">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Signal</span>
+                <strong id="settingsWifiSignal">-</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="settingsPage" class="app-page">
+        <div class="settings-layout">
+          <section class="panel">
+            <h2>Device settings</h2>
+            <label for="host">Hostname</label>
+            <input
+              id="host"
+              placeholder="hidpad-s3"
+              autocomplete="off"
+              pattern="[A-Za-z0-9_\-]*"
+              title="Use only A-Z, a-z, 0-9, underscore and dash. Spaces are not allowed."
+            />
+            <label for="def">Default profile</label>
+            <select id="def"></select>
+            <label for="ttyPass">TTY password</label>
+            <input
+              id="ttyPass"
+              type="password"
+              placeholder="Keep unchanged when empty"
+              autocomplete="new-password"
+            />
+            <label class="checkline" for="ttyAuthOff">
+              <input id="ttyAuthOff" type="checkbox" />
+              Disable TTY auth
+            </label>
+            <button id="saveDeviceSettingsBtn" class="button-primary" type="button">Save settings</button>
+          </section>
+
+          <section class="panel">
+            <h2>Current device settings</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Hostname</span>
+                <strong id="settingsHost">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Default profile</span>
+                <strong id="settingsDefaultProfile">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">TTY auth</span>
+                <strong id="settingsDeviceTtyAuth">-</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="blePage" class="app-page">
+        <div class="settings-layout">
+          <section class="panel">
+            <h2>HID output</h2>
+            <label for="hidTransport">Transport</label>
+            <select id="hidTransport">
+              <option value="usb">USB</option>
+              <option value="ble">Bluetooth LE</option>
+            </select>
+
+            <label for="bleMode">HID device type</label>
+            <select id="bleMode">
+              <option value="keyboard">Keyboard</option>
+              <option value="mouse">Mouse</option>
+            </select>
+
+            <button id="saveBleBtn" class="button-primary" type="button">Save and restart</button>
+          </section>
+
+          <section class="panel">
+            <h2>BLE state</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">HID transport</span>
+                <strong id="bleTransportState">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Device type</span>
+                <strong id="bleModeState">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Bluetooth name</span>
+                <strong id="bleNameState">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Connection</span>
+                <strong id="bleConnectionState">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel update-actions-panel">
+            <div class="panel-title">
+              <h2>Bonded devices</h2>
+              <button id="clearBleBondsBtn" class="button-danger bond-clear-button" type="button">Clear all</button>
+            </div>
+            <div id="bleBonds" class="bond-list" aria-label="Bonded Bluetooth devices"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="observabilityPage" class="app-page">
+        <div class="settings-layout">
+          <section class="panel">
+            <h2>Firmware</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Version</span>
+                <strong id="obsFirmwareVersion">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Build time</span>
+                <strong id="obsBuildTime">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Uptime</span>
+                <strong id="obsUptime">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Chip</span>
+                <strong id="obsChip">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">CPU</span>
+                <strong id="obsCpu">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">SDK</span>
+                <strong id="obsSdk">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Memory</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Heap free</span>
+                <strong id="obsHeapFree">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Heap low water</span>
+                <strong id="obsHeapMin">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Max allocation</span>
+                <strong id="obsHeapMaxAlloc">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Sketch</span>
+                <strong id="obsSketch">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">OTA free</span>
+                <strong id="obsOtaFree">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Flash</span>
+                <strong id="obsFlash">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Storage</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">LittleFS</span>
+                <strong id="obsFilesystem">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Profiles</span>
+                <strong id="obsProfileCount">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">GPIO bindings</span>
+                <strong id="obsGpioBindingCount">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Default profile</span>
+                <strong id="obsDefaultProfile">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Network</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Host</span>
+                <strong id="obsHost">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Wi-Fi</span>
+                <strong id="obsWifiState">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Station IP</span>
+                <strong id="obsStaIp">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">AP IP</span>
+                <strong id="obsApIp">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">RSSI</span>
+                <strong id="obsWifiRssi">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Channel</span>
+                <strong id="obsWifiChannel">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>HID</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">Transport</span>
+                <strong id="obsHidTransport">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">BLE mode</span>
+                <strong id="obsBleMode">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">BLE name</span>
+                <strong id="obsBleName">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">BLE state</span>
+                <strong id="obsBleState">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">BLE bonds</span>
+                <strong id="obsBleBondCount">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Macro</span>
+                <strong id="obsMacroState">-</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Counters</h2>
+            <div class="settings-metrics">
+              <div>
+                <span class="metric-label">API errors</span>
+                <strong id="obsApiErrors">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Wi-Fi reconnect</span>
+                <strong id="obsWifiReconnects">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Macro starts</span>
+                <strong id="obsMacroStarts">-</strong>
+              </div>
+              <div>
+                <span class="metric-label">Selected TTY log levels</span>
+                <strong id="obsTtyLogLevels">-</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="updatePage" class="app-page">
+        <div class="settings-layout update-layout">
+          <section class="panel">
+            <h2>Firmware update</h2>
+            <label for="firmwareFile">Firmware image</label>
+            <input id="firmwareFile" type="file" accept=".bin,application/octet-stream" />
+            <div id="firmwareProgress" class="upload-progress field-hidden">
+              <div id="firmwareProgressBar" class="upload-progress-bar"></div>
+              <span id="firmwareProgressText">0%</span>
+            </div>
+            <div id="firmwareStatus" class="upload-status field-hidden"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Filesystem update</h2>
+            <label for="filesystemFile">LittleFS image</label>
+            <input id="filesystemFile" type="file" accept=".bin,application/octet-stream" />
+            <div id="filesystemProgress" class="upload-progress field-hidden">
+              <div id="filesystemProgressBar" class="upload-progress-bar"></div>
+              <span id="filesystemProgressText">0%</span>
+            </div>
+            <div id="filesystemStatus" class="upload-status field-hidden"></div>
+          </section>
+
+          <section class="panel update-actions-panel">
+            <h2>Update session</h2>
+            <button id="uploadBundleBtn" class="button-warning" type="button">Update firmware + filesystem</button>
+            <div id="bundleStatus" class="upload-status field-hidden"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <div id="ttyHelpModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal></div>
+      <section
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ttyHelpTitle"
+      >
+        <div class="modal-header">
+          <h2 id="ttyHelpTitle">TTY help</h2>
+          <button
+            id="ttyHelpCloseBtn"
+            class="icon-button"
+            type="button"
+            aria-label="Close TTY help"
+            title="Close"
+          >
+            x
+          </button>
+        </div>
+        <div class="modal-body">
+          <h3>Commands</h3>
+          <dl class="help-list">
+            <dt>HELP</dt>
+            <dd>Show supported TTY commands.</dd>
+            <dt>PING</dt>
+            <dd>Check that the command channel is alive. Returns PONG.</dd>
+            <dt>RUN &lt;profile&gt;</dt>
+            <dd>Run a saved profile. Repeats are controlled by REPEAT or LOOP blocks inside the macro.</dd>
+            <dt>STOP</dt>
+            <dd>Stop the current macro.</dd>
+            <dt>LINE &lt;macro_line&gt;</dt>
+            <dd>Run one macro command line without saving a profile.</dd>
+          </dl>
+
+          <h3>Auth</h3>
+          <dl class="help-list">
+            <dt>Access token</dt>
+            <dd>Required only when TTY password is enabled in Settings.</dd>
+            <dt>WebSocket log</dt>
+            <dd>Uses the same token and shows the command log in real time.</dd>
+          </dl>
+
+          <h3>Examples</h3>
+          <pre class="terminal">PING
+RUN hello
+RUN mouse_test
+STOP</pre>
+          <pre class="terminal">LINE KEY CTRL ALT T
+LINE TEXT git status
+LINE KEY ENTER</pre>
+        </div>
+      </section>
+    </div>
+    <div id="macroHelpModal" class="modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal></div>
+      <section
+        class="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="macroHelpTitle"
+      >
+        <div class="modal-header">
+          <h2 id="macroHelpTitle">Macro help</h2>
+          <button
+            id="macroHelpCloseBtn"
+            class="icon-button"
+            type="button"
+            aria-label="Close macro help"
+            title="Close"
+          >
+            x
+          </button>
+        </div>
+        <div class="modal-body">
+          <h3>Commands</h3>
+          <dl class="help-list">
+            <dt>TEXT / TYPE</dt>
+            <dd>Print text as keyboard input.</dd>
+            <dt>DELAY / WAIT</dt>
+            <dd>Pause execution for milliseconds.</dd>
+            <dt>KEY / HOTKEY</dt>
+            <dd>Press a key or key combination. Common names and aliases include CTRL, CONTROL, ALT, SHIFT, GUI, WIN, CMD, ENTER, RETURN, ESC, ESCAPE, TAB, BACKSPACE, DELETE, DEL, INSERT and INS.</dd>
+            <dt>REPEAT / LOOP / END</dt>
+            <dd>Repeat a block a fixed number of times or forever until Stop.</dd>
+            <dt>MOUSE MOVE</dt>
+            <dd>Move pointer by X/Y pixels. Movement is pre-shaped to compensate typical OS pointer acceleration; optional third value bends the path into a smooth arc.</dd>
+            <dt>MOUSE WHEEL / SCROLL</dt>
+            <dd>Scroll vertical wheel by signed steps.</dd>
+            <dt>MOUSE PAN / HWHEEL</dt>
+            <dd>Scroll horizontal wheel by signed steps.</dd>
+            <dt>MOUSE CLICK / PRESS / RELEASE</dt>
+            <dd>Control LEFT, RIGHT, MIDDLE, WHEEL or MBUTTON mouse button.</dd>
+            <dt>RELEASEALL</dt>
+            <dd>Release all keyboard and mouse buttons.</dd>
+          </dl>
+
+          <h3>Comments</h3>
+          <dl class="help-list">
+            <dt># comment</dt>
+            <dd>Ignored by the macro engine and kept in profile export/import.</dd>
+            <dt>; comment</dt>
+            <dd>Alternative comment syntax.</dd>
+            <dt>// comment</dt>
+            <dd>Alternative comment syntax.</dd>
+          </dl>
+
+          <h3>Loops</h3>
+          <dl class="help-list">
+            <dt>REPEAT &lt;count&gt;</dt>
+            <dd>Run commands until END the selected number of times.</dd>
+            <dt>LOOP</dt>
+            <dd>Run commands until END forever. Stop with the Stop button, TTY STOP or GPIO STOP.</dd>
+            <dt>END</dt>
+            <dd>Close the nearest REPEAT or LOOP block.</dd>
+          </dl>
+
+          <h3>Examples</h3>
+          <pre class="terminal">KEY CTRL ALT T
+DELAY 500
+TEXT echo HID MacroPad ready
+KEY ENTER</pre>
+          <pre class="terminal">REPEAT 40
+  MOUSE MOVE 30 0 2
+  DELAY 120
+  MOUSE MOVE 0 30 2
+  MOUSE CLICK LEFT
+END</pre>
+          <pre class="terminal">MOUSE WHEEL -3
+DELAY 100
+MOUSE WHEEL 3
+MOUSE CLICK WHEEL</pre>
+        </div>
+      </section>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <script src="script/api.js"></script>
+    <script src="script/ui.js"></script>
+    <script src="script/wifi.js"></script>
+    <script src="script/ble.js"></script>
+    <script src="script/gpio.js"></script>
+    <script src="script/profiles.js"></script>
+    <script src="script/tty.js"></script>
+    <script src="script/update.js"></script>
+    <script src="script/app.js"></script>
+  </body>
+</html>

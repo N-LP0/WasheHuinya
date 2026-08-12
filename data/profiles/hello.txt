@@ -1,0 +1,2 @@
+TEXT Hello from HID MacroPad
+KEY ENTER

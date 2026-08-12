@@ -1,0 +1,46 @@
+@media (max-width: 900px) {
+  main {
+    width: min(100% - 24px, 680px);
+    padding-top: 18px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  .status-grid,
+  .row,
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-tabs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  }
+
+  .tab-button {
+    width: 100%;
+  }
+
+  .actions {
+    grid-template-columns: 1fr;
+  }
+
+  .run-options {
+    grid-template-columns: 1fr;
+  }
+
+  .gpio-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .gpio-row span:last-child {
+    grid-column: 2;
+  }
+}
