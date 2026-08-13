@@ -1,4 +1,4 @@
-# WasheHuinya
+# Washe Huinya
 
 ![alt text](image.png)
 WasheHuinya is firmware and a web interface for the ESP32-S3 HID MacroPad. The device can send keyboard and mouse HID events over USB or Bluetooth LE, while being controlled via Wi-Fi through the built-in web UI, HTTP API, TTY commands, and physical GPIO buttons.
