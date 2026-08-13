@@ -19,6 +19,9 @@ class MacroEngine {
   bool runCommandLine(const String& commandLine);
   void tick();
 
+  void onBleConnected();
+  void onBleDisconnected();
+
   bool isBusy() const;
   uint32_t startCount() const;
   MacroStateView snapshot() const;
@@ -57,6 +60,8 @@ class MacroEngine {
   bool useBle_ = false;
 
   bool busy_ = false;
+  bool directCommandActive_ = false;
+  bool paused_ = false;
   bool infinite_ = false;
   bool releasePending_ = false;
   String script_;

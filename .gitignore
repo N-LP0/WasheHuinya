@@ -18,3 +18,5 @@ flash_download_tool
 # .clang-format
 # .editorconfig
 # .markdownlint.jsonc
+
+.DS_Store

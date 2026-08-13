@@ -1,5 +1,6 @@
 let toastTimer;
 const profileNamePattern = /^[A-Za-z0-9_-]+$/;
+const maxTokenNameLength = 64;
 
 function showToast(message, isError = false) {
   const toast = document.getElementById('toast');
@@ -71,6 +72,9 @@ function validateTokenNameValue(value, label, required = true) {
   }
   if (!profileNamePattern.test(clean)) {
     return `${label} may contain only A-Z, a-z, 0-9, "_" and "-"; spaces are not allowed`;
+  }
+  if (clean.length > maxTokenNameLength) {
+    return `${label} must not exceed ${maxTokenNameLength} characters`;
   }
   return '';
 }

@@ -1,5 +1,7 @@
 #include "BleHidService.h"
 
+#include "MacroEngine.h"
+
 #include <BLE2902.h>
 #include <BLEAdvertising.h>
 #include <BLEDevice.h>
@@ -55,7 +57,10 @@ class SecurityCallbacks final : public BLESecurityCallbacks {
     owner_.setPairing(true);
     return true;
   }
-  void onAuthenticationComplete(esp_ble_auth_cmpl_t) override { owner_.setPairing(false); }
+  void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
+    owner_.setPairing(false);
+    owner_.setHidNotificationsEnabled(result.success);
+  }
   bool onConfirmPIN(uint32_t) override {
     owner_.setPairing(true);
     return true;
@@ -115,6 +120,8 @@ bool BleHidService::init(const DeviceConfig& config) {
   server_->setCallbacks(new ServerCallbacks(*this));
   hid_ = new BLEHIDDevice(server_);
   input_ = hid_->inputReport(1);
+  inputConfiguration_ = static_cast<BLE2902*>(
+      input_->getDescriptorByUUID(BLEUUID(static_cast<uint16_t>(0x2902))));
   if (keyboardMode_) hid_->outputReport(1);
   hid_->manufacturer()->setValue("HIDPad");
   BLECharacteristic* model = hid_->deviceInfo()->createCharacteristic(
@@ -193,7 +200,33 @@ void BleHidService::setConnected(bool connected) {
   if (!mutex_) return;
   xSemaphoreTake(mutex_, portMAX_DELAY);
   connected_ = connected;
+  if (!connected) hidReady_ = false;
+  BLE2902* inputConfiguration = inputConfiguration_;
+  MacroEngine* me = macroEngine_;
   xSemaphoreGive(mutex_);
+
+  if (!connected && inputConfiguration) inputConfiguration->setNotifications(false);
+  if (me && !connected) me->onBleDisconnected();
+}
+
+void BleHidService::setHidNotificationsEnabled(bool enabled) {
+  if (!mutex_) return;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  BLE2902* inputConfiguration = inputConfiguration_;
+  MacroEngine* me = macroEngine_;
+  xSemaphoreGive(mutex_);
+
+  if (inputConfiguration) inputConfiguration->setNotifications(enabled);
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  hidReady_ = enabled && inputConfiguration != nullptr;
+  const bool ready = connected_ && hidReady_;
+  xSemaphoreGive(mutex_);
+  if (me) {
+    if (ready)
+      me->onBleConnected();
+    else
+      me->onBleDisconnected();
+  }
 }
 
 void BleHidService::setPairing(bool pairing) {
@@ -203,8 +236,26 @@ void BleHidService::setPairing(bool pairing) {
   xSemaphoreGive(mutex_);
 }
 
+void BleHidService::setMacroEngine(MacroEngine* engine) {
+  if (!mutex_) {
+    macroEngine_ = engine;
+    return;
+  }
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  macroEngine_ = engine;
+  xSemaphoreGive(mutex_);
+}
+
+bool BleHidService::isConnected() const {
+  if (!mutex_) return false;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  const bool ready = connected_ && hidReady_;
+  xSemaphoreGive(mutex_);
+  return ready;
+}
+
 bool BleHidService::typeText(const String& text) {
-  if (!enabled_ || !keyboardMode_ || !connected_) return false;
+  if (!enabled_ || !keyboardMode_ || !isConnected()) return false;
   for (size_t i = 0; i < text.length(); ++i) {
     bool shift = false;
     const uint8_t usage = asciiUsage(text[i], shift);
@@ -216,7 +267,7 @@ bool BleHidService::typeText(const String& text) {
 }
 
 bool BleHidService::pressKey(uint8_t key) {
-  if (!enabled_ || !keyboardMode_ || !connected_) return false;
+  if (!enabled_ || !keyboardMode_ || !isConnected()) return false;
   if (key >= KEY_LEFT_CTRL && key <= KEY_RIGHT_GUI) {
     modifiers_ |= static_cast<uint8_t>(1U << (key - KEY_LEFT_CTRL));
     return sendKeyboardReport();
@@ -249,7 +300,7 @@ void BleHidService::releaseKeyboard() {
 }
 
 bool BleHidService::sendKeyboardReport() {
-  if (!connected_ || !input_) return false;
+  if (!isConnected() || !input_) return false;
   uint8_t report[8] = {modifiers_, 0, keys_[0], keys_[1], keys_[2], keys_[3], keys_[4], keys_[5]};
   input_->setValue(report, sizeof(report));
   input_->notify();
@@ -286,7 +337,7 @@ void BleHidService::releaseMouseButtons() {
 }
 
 bool BleHidService::sendMouseReport(int8_t x, int8_t y, int8_t wheel, int8_t pan) {
-  if (!enabled_ || keyboardMode_ || !connected_ || !input_) return false;
+  if (!enabled_ || keyboardMode_ || !isConnected() || !input_) return false;
   uint8_t report[5] = {mouseButtons_, static_cast<uint8_t>(x), static_cast<uint8_t>(y),
                        static_cast<uint8_t>(wheel), static_cast<uint8_t>(pan)};
   input_->setValue(report, sizeof(report));

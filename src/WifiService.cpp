@@ -70,6 +70,11 @@ void WifiService::tick() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    lastSsidFound_ = true;
+    lastRssi_ = WiFi.RSSI();
+    lastChannel_ = WiFi.channel();
+    xSemaphoreGive(mutex_);
     if (apActive) {
       stopAccessPoint();
     }
@@ -199,47 +204,19 @@ void WifiService::startStationIfConfigured() {
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname(hostname.c_str());
 
-  bool found = false;
-  uint8_t bssid[6] = {0};
-  int32_t channel = 0;
-  int32_t rssi = 0;
-  const int networks = WiFi.scanNetworks(false, false);
-  for (int i = 0; i < networks; ++i) {
-    if (WiFi.SSID(i) == cfg.wifiSsid) {
-      found = true;
-      channel = WiFi.channel(i);
-      rssi = WiFi.RSSI(i);
-      const uint8_t* scannedBssid = WiFi.BSSID(i);
-      if (scannedBssid != nullptr) {
-        memcpy(bssid, scannedBssid, sizeof(bssid));
-      }
-      break;
-    }
-  }
-  WiFi.scanDelete();
-
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  lastSsidFound_ = found;
-  lastRssi_ = rssi;
-  lastChannel_ = channel;
+  lastSsidFound_ = false;
+  lastRssi_ = 0;
+  lastChannel_ = 0;
   ++reconnectAttempts_;
   xSemaphoreGive(mutex_);
 
-  if (found && channel > 0) {
-    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str(), channel, bssid);
-  } else {
-    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
-  }
+  // WiFi.begin starts the driver's own asynchronous connection procedure. An explicit
+  // synchronous scan here disrupts AP traffic and can stall WebUI asset downloads.
+  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
 
   Serial.printf("WiFi STA connect: ssid=%s password=%s\n",
                 cfg.wifiSsid.c_str(),
                 cfg.wifiPassword.isEmpty() ? "empty" : "set");
-  if (found) {
-    Serial.printf("WiFi STA target found: channel=%d rssi=%d\n",
-                  static_cast<int>(channel),
-                  static_cast<int>(rssi));
-  } else {
-    Serial.println("WiFi STA target was not found during scan");
-  }
   lastStaAttemptMs_ = millis();
 }

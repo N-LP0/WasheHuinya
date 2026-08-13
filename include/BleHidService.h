@@ -6,7 +6,10 @@
 
 class BLECharacteristic;
 class BLEHIDDevice;
+class BLE2902;
 class BLEServer;
+
+class MacroEngine;
 
 class BleHidService {
  public:
@@ -25,7 +28,10 @@ class BleHidService {
   void releaseMouseButtons();
 
   void setConnected(bool connected);
+  void setHidNotificationsEnabled(bool enabled);
   void setPairing(bool pairing);
+  void setMacroEngine(MacroEngine* engine);
+  bool isConnected() const;
 
  private:
   bool sendKeyboardReport();
@@ -38,12 +44,15 @@ class BleHidService {
   BLEServer* server_ = nullptr;
   BLEHIDDevice* hid_ = nullptr;
   BLECharacteristic* input_ = nullptr;
+  BLE2902* inputConfiguration_ = nullptr;
   bool enabled_ = false;
   bool connected_ = false;
+  bool hidReady_ = false;
   bool pairing_ = false;
   bool keyboardMode_ = true;
   String name_;
   uint8_t modifiers_ = 0;
   uint8_t keys_[6] = {};
   uint8_t mouseButtons_ = 0;
+  MacroEngine* macroEngine_ = nullptr;
 };

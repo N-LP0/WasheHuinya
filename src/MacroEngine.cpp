@@ -1,7 +1,10 @@
 #include "MacroEngine.h"
 
 #include "BleHidService.h"
+#include "AppLimits.h"
 
+#include <cerrno>
+#include <climits>
 #include <esp_system.h>
 
 namespace {
@@ -14,6 +17,10 @@ constexpr float kMouseBallisticsCompensation = 0.65f;
 
 int8_t constrainedStep(int value, int maxAbs) {
   return static_cast<int8_t>(constrain(value, -maxAbs, maxAbs));
+}
+
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
 }
 
 int mouseMoveStepCount(int x, int y) {
@@ -73,6 +80,7 @@ MacroEngine::MacroEngine() = default;
 void MacroEngine::init(BleHidService* ble, const String& hidTransport) {
   mutex_ = xSemaphoreCreateMutex();
   ble_ = ble;
+  if (ble_) ble_->setMacroEngine(this);
   useBle_ = hidTransport == "ble";
   keyboard_.begin();
   mouse_.begin();
@@ -86,12 +94,14 @@ bool MacroEngine::start(const String& profileName, const String& script) {
     return false;
   }
 
+  const bool waitForBle = useBle_ && ble_ && !ble_->isConnected();
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  if (busy_) {
+  if (busy_ || directCommandActive_) {
     xSemaphoreGive(mutex_);
     return false;
   }
   busy_ = true;
+  paused_ = waitForBle;
   infinite_ = false;
   releasePending_ = false;
   script_ = script;
@@ -103,7 +113,7 @@ bool MacroEngine::start(const String& profileName, const String& script) {
   nextMouseReportMs_ = 0;
   clearPendingMouseReport();
   clearLoopStack();
-  message_ = String("Running: ") + profileName;
+  message_ = waitForBle ? "Paused: waiting for BLE HID" : String("Running: ") + profileName;
   ++startCount_;
   xSemaphoreGive(mutex_);
   return true;
@@ -117,6 +127,7 @@ bool MacroEngine::stop() {
   }
 
   busy_ = false;
+  paused_ = false;
   infinite_ = false;
   releasePending_ = false;
   releaseKeyboard();
@@ -151,29 +162,46 @@ bool MacroEngine::finishAfterCurrentRun() {
 
 bool MacroEngine::runCommandLine(const String& commandLine) {
   xSemaphoreTake(mutex_, portMAX_DELAY);
-  const bool canRun = !busy_;
-  xSemaphoreGive(mutex_);
-  if (!canRun) {
+  if (busy_ || directCommandActive_) {
+    xSemaphoreGive(mutex_);
     return false;
   }
-  return runLine(commandLine, false);
+  directCommandActive_ = true;
+  xSemaphoreGive(mutex_);
+
+  const bool ok = runLine(commandLine, false);
+
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  directCommandActive_ = false;
+  xSemaphoreGive(mutex_);
+  return ok;
 }
 
 void MacroEngine::tick() {
   xSemaphoreTake(mutex_, portMAX_DELAY);
 
-  if (releasePending_ && millis() >= waitUntil_) {
+  if (paused_ && busy_ && useBle_ && ble_ && ble_->isConnected()) {
+    paused_ = false;
+    message_ = String("Resumed: ") + currentProfile_;
+  }
+
+  if (releasePending_ && deadlineReached(millis(), waitUntil_)) {
     releaseKeyboard();
     releasePending_ = false;
     waitUntil_ = 0;
   }
 
-  if (!busy_ || releasePending_) {
+  if (paused_) {
     xSemaphoreGive(mutex_);
     return;
   }
 
-  if (waitUntil_ != 0 && millis() < waitUntil_) {
+  if (!busy_ || directCommandActive_ || releasePending_) {
+    xSemaphoreGive(mutex_);
+    return;
+  }
+
+  if (waitUntil_ != 0 && !deadlineReached(millis(), waitUntil_)) {
     xSemaphoreGive(mutex_);
     return;
   }
@@ -197,6 +225,7 @@ void MacroEngine::tick() {
     return;
   }
 
+  size_t instructionCount = 0;
   while (cursor_ < script_.length()) {
     int end = script_.indexOf('\n', cursor_);
     if (end < 0) {
@@ -211,6 +240,7 @@ void MacroEngine::tick() {
       continue;
     }
 
+    ++instructionCount;
     if (!runLine(line, true)) {
       busy_ = false;
       infinite_ = false;
@@ -231,6 +261,10 @@ void MacroEngine::tick() {
     }
 
     if (waitUntil_ != 0) {
+      xSemaphoreGive(mutex_);
+      return;
+    }
+    if (instructionCount >= AppLimits::kMacroInstructionsPerTick) {
       xSemaphoreGive(mutex_);
       return;
     }
@@ -303,7 +337,8 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
 
   if (cmd == "DELAY" || cmd == "WAIT") {
     int ms = 0;
-    if (!parseIntToken(arg, ms) || ms < 0) {
+    if (!parseIntToken(arg, ms) || ms < 0 || ms > AppLimits::kMaxDelayMs) {
+      message_ = "DELAY requires 0..86400000 milliseconds";
       return false;
     }
     waitUntil_ = millis() + static_cast<uint32_t>(ms);
@@ -327,6 +362,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
     int mods[4];
     size_t modCount = 0;
     int primary = -1;
+    bool invalidToken = false;
 
     auto absorb = [&](const String& token) {
       String t = token;
@@ -358,7 +394,9 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       }
       if (t.length() == 1) {
         primary = static_cast<uint8_t>(t[0]);
+        return;
       }
+      invalidToken = true;
     };
 
     absorb(first);
@@ -369,7 +407,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       absorb(t);
     }
 
-    if (primary < 0) {
+    if (primary < 0 || invalidToken) {
       return false;
     }
 
@@ -388,8 +426,8 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       return false;
     }
     int count = 0;
-    if (!parseIntToken(arg, count) || count <= 0) {
-      message_ = "REPEAT requires a positive count";
+    if (!parseIntToken(arg, count) || count <= 0 || count > AppLimits::kMaxRepeatCount) {
+      message_ = "REPEAT requires 1..100000000";
       return false;
     }
     return pushLoop(cursor_, static_cast<uint32_t>(count), false);
@@ -400,6 +438,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       message_ = "LOOP is only valid inside a macro";
       return false;
     }
+    if (!arg.isEmpty()) return false;
     return pushLoop(cursor_, 0, true);
   }
 
@@ -408,6 +447,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       message_ = "END is only valid inside a macro";
       return false;
     }
+    if (!arg.isEmpty()) return false;
     return handleLoopEnd();
   }
 
@@ -429,7 +469,13 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       if (!jitterToken.isEmpty() && !parseIntToken(jitterToken, jitter)) {
         return false;
       }
-      jitter = constrain(jitter, 0, kMaxMouseJitter);
+      if (!tokenAt(arg, p).isEmpty() ||
+          x < AppLimits::kMinMouseMove || x > AppLimits::kMaxMouseMove ||
+          y < AppLimits::kMinMouseMove || y > AppLimits::kMaxMouseMove ||
+          jitter < 0 || jitter > kMaxMouseJitter) {
+        message_ = "MOUSE MOVE requires X/Y in -32767..32767";
+        return false;
+      }
       if (chunkMouse) {
         queueMouseMove(x, y, jitter);
         if (!runPendingMouseReport()) return false;
@@ -443,6 +489,11 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
     if (sub == "WHEEL" || sub == "SCROLL") {
       int wheel = 0;
       if (!parseIntToken(tokenAt(arg, p), wheel)) {
+        return false;
+      }
+      if (!tokenAt(arg, p).isEmpty() ||
+          wheel < AppLimits::kMinMouseScroll || wheel > AppLimits::kMaxMouseScroll) {
+        message_ = "MOUSE WHEEL requires -10000..10000";
         return false;
       }
       if (chunkMouse) {
@@ -460,6 +511,11 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
       if (!parseIntToken(tokenAt(arg, p), pan)) {
         return false;
       }
+      if (!tokenAt(arg, p).isEmpty() ||
+          pan < AppLimits::kMinMouseScroll || pan > AppLimits::kMaxMouseScroll) {
+        message_ = "MOUSE PAN requires -10000..10000";
+        return false;
+      }
       if (chunkMouse) {
         queueMouseScroll(0, pan);
         if (!runPendingMouseReport()) return false;
@@ -472,7 +528,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
 
     if (sub == "CLICK") {
       const int button = mouseButton(tokenAt(arg, p));
-      if (button < 0) {
+      if (button < 0 || !tokenAt(arg, p).isEmpty()) {
         return false;
       }
       return clickMouse(static_cast<uint8_t>(button));
@@ -480,7 +536,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
 
     if (sub == "PRESS") {
       const int button = mouseButton(tokenAt(arg, p));
-      if (button < 0) {
+      if (button < 0 || !tokenAt(arg, p).isEmpty()) {
         return false;
       }
       return pressMouse(static_cast<uint8_t>(button));
@@ -488,7 +544,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
 
     if (sub == "RELEASE") {
       const int button = mouseButton(tokenAt(arg, p));
-      if (button < 0) {
+      if (button < 0 || !tokenAt(arg, p).isEmpty()) {
         return false;
       }
       return releaseMouse(static_cast<uint8_t>(button));
@@ -496,6 +552,7 @@ bool MacroEngine::runLine(const String& line, bool chunkMouse) {
   }
 
   if (cmd == "RELEASEALL") {
+    if (!arg.isEmpty()) return false;
     releaseKeyboard();
     releaseMouseButtons();
     return true;
@@ -582,6 +639,11 @@ void MacroEngine::queueMouseScroll(int wheel, int pan) {
 }
 
 bool MacroEngine::runPendingMouseReport() {
+  if (useBle_ && ble_ && !ble_->isConnected()) {
+    paused_ = true;
+    message_ = "Paused: BLE disconnected";
+    return true;
+  }
   int stepX = 0;
   int stepY = 0;
   if (pendingMouseStepIndex_ < pendingMouseStepCount_) {
@@ -616,6 +678,24 @@ bool MacroEngine::runPendingMouseReport() {
   const uint32_t now = millis();
   waitUntil_ = static_cast<int32_t>(nextMouseReportMs_ - now) > 0 ? nextMouseReportMs_ : 0;
   return true;
+}
+
+void MacroEngine::onBleConnected() {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (paused_ && busy_) {
+    paused_ = false;
+    message_ = String("Resumed: ") + currentProfile_;
+  }
+  xSemaphoreGive(mutex_);
+}
+
+void MacroEngine::onBleDisconnected() {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (busy_) {
+    paused_ = true;
+    message_ = "Paused: BLE disconnected";
+  }
+  xSemaphoreGive(mutex_);
 }
 
 bool MacroEngine::pushLoop(size_t startCursor, uint32_t repeatCount, bool infinite) {
@@ -762,8 +842,14 @@ bool MacroEngine::parseIntToken(const String& text, int& value) const {
     return false;
   }
   char* end = nullptr;
-  value = strtol(token.c_str(), &end, 10);
-  return end != token.c_str() && *end == '\0';
+  errno = 0;
+  const long parsed = strtol(token.c_str(), &end, 10);
+  if (errno == ERANGE || end == token.c_str() || *end != '\0' ||
+      parsed < INT_MIN || parsed > INT_MAX) {
+    return false;
+  }
+  value = static_cast<int>(parsed);
+  return true;
 }
 
 bool MacroEngine::typeText(const String& text) {

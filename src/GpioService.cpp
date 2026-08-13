@@ -31,6 +31,10 @@ void GpioService::applyBindings(const std::vector<GpioBinding>& bindings) {
   }
 
   xSemaphoreTake(mutex_, portMAX_DELAY);
+  portENTER_CRITICAL(&isrMux_);
+  interruptsEnabled_ = false;
+  isrBindingCount_ = 0;
+  portEXIT_CRITICAL(&isrMux_);
   detachAll();
   bindingCount_ = 0;
   activeIndex_ = -1;
@@ -46,6 +50,17 @@ void GpioService::applyBindings(const std::vector<GpioBinding>& bindings) {
     }
   }
 
+  for (size_t i = 0; i < bindingCount_; ++i) {
+    attachInterruptArg(
+        digitalPinToInterrupt(bindings_[i].pin),
+        handleInterrupt,
+        &slots_[i],
+        CHANGE);
+  }
+  portENTER_CRITICAL(&isrMux_);
+  isrBindingCount_ = bindingCount_;
+  interruptsEnabled_ = true;
+  portEXIT_CRITICAL(&isrMux_);
   xSemaphoreGive(mutex_);
 }
 
@@ -167,14 +182,12 @@ void IRAM_ATTR GpioService::handleInterrupt(void* arg) {
 }
 
 void IRAM_ATTR GpioService::markPendingFromIsr(uint8_t index) {
-  if (index >= bindingCount_) {
-    return;
-  }
-
   const TickType_t now = xTaskGetTickCountFromISR();
   portENTER_CRITICAL_ISR(&isrMux_);
-  lastChangeTick_[index] = now;
-  pending_[index] = true;
+  if (interruptsEnabled_ && index < isrBindingCount_) {
+    lastChangeTick_[index] = now;
+    pending_[index] = true;
+  }
   portEXIT_CRITICAL_ISR(&isrMux_);
 }
 
@@ -200,9 +213,4 @@ void GpioService::setupBinding(size_t index, const GpioBinding& binding) {
   slots_[index].service = this;
   slots_[index].index = static_cast<uint8_t>(index);
 
-  attachInterruptArg(
-      digitalPinToInterrupt(binding.pin),
-      handleInterrupt,
-      &slots_[index],
-      CHANGE);
 }
