@@ -113,7 +113,7 @@ void RuntimeTasks::webTask(void* param) {
   (void)param;
   for (;;) {
     g_runtime->web_->handleClient();
-    vTaskDelay(pdMS_TO_TICKS(30));
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 

@@ -1,6 +1,9 @@
 #include "StorageService.h"
 
+#include "AppLimits.h"
+
 #include <ArduinoJson.h>
+#include <algorithm>
 
 namespace {
 constexpr char kPrefsNs[] = "hidpad";
@@ -29,7 +32,27 @@ bool StorageService::init() {
 }
 
 bool StorageService::filesystemReady() const {
-  return fsReady_;
+  if (!mutex_) return false;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  const bool ready = fsReady_;
+  xSemaphoreGive(mutex_);
+  return ready;
+}
+
+bool StorageService::setFilesystemMounted(bool mounted) {
+  if (!mutex_) return false;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (mounted) {
+    fsReady_ = LittleFS.begin(false, "/littlefs", 10, kLittleFsPartition);
+    lastError_ = fsReady_ ? "" : "LittleFS remount failed";
+  } else {
+    LittleFS.end();
+    fsReady_ = false;
+    lastError_ = "";
+  }
+  const bool ok = mounted ? fsReady_ : true;
+  xSemaphoreGive(mutex_);
+  return ok;
 }
 
 DeviceConfig StorageService::loadConfig() {
@@ -68,19 +91,30 @@ bool StorageService::saveConfig(const DeviceConfig& config) {
   xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool ok = prefs.begin(kPrefsNs, false);
   if (!ok) {
+    lastError_ = "NVS config namespace could not be opened";
     xSemaphoreGive(mutex_);
     return false;
   }
-  prefs.putString("ssid", config.wifiSsid);
-  prefs.putString("pass", config.wifiPassword);
-  prefs.putString("host", config.hostname);
-  prefs.putString("profile", config.defaultProfile);
-  prefs.putString("ttyPass", config.ttyPassword);
-  prefs.putString("hidOut", config.hidTransport);
-  prefs.putString("bleMode", config.bleMode);
+  bool written = true;
+  written &= prefs.putString("ssid", config.wifiSsid) == config.wifiSsid.length();
+  written &= prefs.putString("pass", config.wifiPassword) == config.wifiPassword.length();
+  written &= prefs.putString("host", config.hostname) == config.hostname.length();
+  written &= prefs.putString("profile", config.defaultProfile) == config.defaultProfile.length();
+  written &= prefs.putString("ttyPass", config.ttyPassword) == config.ttyPassword.length();
+  written &= prefs.putString("hidOut", config.hidTransport) == config.hidTransport.length();
+  written &= prefs.putString("bleMode", config.bleMode) == config.bleMode.length();
+  const bool verified =
+      prefs.getString("ssid", "") == config.wifiSsid &&
+      prefs.getString("pass", "") == config.wifiPassword &&
+      prefs.getString("host", "") == config.hostname &&
+      prefs.getString("profile", "") == config.defaultProfile &&
+      prefs.getString("ttyPass", "") == config.ttyPassword &&
+      prefs.getString("hidOut", "") == config.hidTransport &&
+      prefs.getString("bleMode", "") == config.bleMode;
   prefs.end();
+  lastError_ = written && verified ? "" : "NVS config write verification failed";
   xSemaphoreGive(mutex_);
-  return true;
+  return written && verified;
 }
 
 std::vector<GpioBinding> StorageService::loadGpioBindings() {
@@ -147,13 +181,16 @@ bool StorageService::saveGpioBindings(const std::vector<GpioBinding>& bindings) 
   xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool ok = prefs.begin(kPrefsNs, false);
   if (!ok) {
+    lastError_ = "NVS GPIO namespace could not be opened";
     xSemaphoreGive(mutex_);
     return false;
   }
-  prefs.putString(kGpioBindingsKey, json);
+  const bool written = prefs.putString(kGpioBindingsKey, json) == json.length();
+  const bool verified = prefs.getString(kGpioBindingsKey, "") == json;
   prefs.end();
+  lastError_ = written && verified ? "" : "NVS GPIO write verification failed";
   xSemaphoreGive(mutex_);
-  return true;
+  return written && verified;
 }
 
 std::vector<GpioBinding> StorageService::normalizeGpioBindings(const std::vector<GpioBinding>& bindings) {
@@ -215,27 +252,47 @@ std::vector<GpioBinding> StorageService::normalizeGpioBindings(const std::vector
 }
 
 bool StorageService::saveProfile(const String& name, const String& script) {
-  if (!isValidName(name)) {
+  if (!isValidName(name) || script.length() > AppLimits::kMaxScriptBytes) {
     return false;
   }
-  if (!fsReady_) {
-    return false;
-  }
-
   xSemaphoreTake(mutex_, portMAX_DELAY);
+  if (!fsReady_) {
+    lastError_ = "LittleFS is not mounted";
+    xSemaphoreGive(mutex_);
+    return false;
+  }
+  const String path = profilePath(name);
+  size_t existingSize = 0;
+  File existing = LittleFS.open(path, FILE_READ);
+  if (existing) {
+    existingSize = existing.size();
+    existing.close();
+  }
+  const size_t growth = script.length() > existingSize ? script.length() - existingSize : 0;
+  const size_t totalBytes = LittleFS.totalBytes();
+  const size_t usedBytes = LittleFS.usedBytes();
+  const size_t freeBytes = totalBytes > usedBytes ? totalBytes - usedBytes : 0;
+  if (freeBytes < growth + AppLimits::kFilesystemReserveBytes) {
+    lastError_ = "Not enough LittleFS space";
+    xSemaphoreGive(mutex_);
+    return false;
+  }
   const bool dirOk = LittleFS.exists(kProfilesDir) || LittleFS.mkdir(kProfilesDir);
   if (!dirOk) {
+    lastError_ = "Profiles directory could not be created";
     xSemaphoreGive(mutex_);
     return false;
   }
 
-  File file = LittleFS.open(profilePath(name), FILE_WRITE);
+  File file = LittleFS.open(path, FILE_WRITE);
   if (!file) {
+    lastError_ = "Profile file could not be opened for writing";
     xSemaphoreGive(mutex_);
     return false;
   }
   const size_t written = file.print(script);
   file.close();
+  lastError_ = written == script.length() ? "" : "Profile write was incomplete";
   xSemaphoreGive(mutex_);
   return written == script.length();
 }
@@ -244,13 +301,18 @@ String StorageService::loadProfile(const String& name) {
   if (!isValidName(name)) {
     return "";
   }
+  xSemaphoreTake(mutex_, portMAX_DELAY);
   if (!fsReady_) {
+    xSemaphoreGive(mutex_);
     return "";
   }
-
-  xSemaphoreTake(mutex_, portMAX_DELAY);
   File file = LittleFS.open(profilePath(name), FILE_READ);
   if (!file) {
+    xSemaphoreGive(mutex_);
+    return "";
+  }
+  if (file.size() > AppLimits::kMaxScriptBytes) {
+    file.close();
     xSemaphoreGive(mutex_);
     return "";
   }
@@ -264,11 +326,11 @@ bool StorageService::deleteProfile(const String& name) {
   if (!isValidName(name)) {
     return false;
   }
+  xSemaphoreTake(mutex_, portMAX_DELAY);
   if (!fsReady_) {
+    xSemaphoreGive(mutex_);
     return false;
   }
-
-  xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool ok = LittleFS.remove(profilePath(name));
   xSemaphoreGive(mutex_);
   return ok;
@@ -278,11 +340,11 @@ bool StorageService::profileExists(const String& name) {
   if (!isValidName(name)) {
     return false;
   }
+  xSemaphoreTake(mutex_, portMAX_DELAY);
   if (!fsReady_) {
+    xSemaphoreGive(mutex_);
     return false;
   }
-
-  xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool ok = LittleFS.exists(profilePath(name));
   xSemaphoreGive(mutex_);
   return ok;
@@ -290,11 +352,11 @@ bool StorageService::profileExists(const String& name) {
 
 std::vector<String> StorageService::listProfiles() {
   std::vector<String> names;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
   if (!fsReady_) {
+    xSemaphoreGive(mutex_);
     return names;
   }
-
-  xSemaphoreTake(mutex_, portMAX_DELAY);
   File root = LittleFS.open(kProfilesDir);
   if (root && root.isDirectory()) {
     File file = root.openNextFile();
@@ -319,8 +381,122 @@ std::vector<String> StorageService::listProfiles() {
   return names;
 }
 
+StorageService::Result StorageService::importProfilesAtomic(
+    const std::vector<std::pair<String, String>>& profiles) {
+  if (profiles.empty() || profiles.size() > AppLimits::kMaxImportProfiles) return Result::Invalid;
+
+  std::vector<String> names;
+  names.reserve(profiles.size());
+  size_t stagedBytes = 0;
+  for (const auto& item : profiles) {
+    if (!isValidName(item.first)) return Result::Invalid;
+    if (item.second.length() > AppLimits::kMaxScriptBytes) return Result::TooLarge;
+    if (std::find(names.begin(), names.end(), item.first) != names.end()) return Result::Invalid;
+    names.push_back(item.first);
+    stagedBytes += item.second.length();
+  }
+  if (!filesystemReady()) return Result::IoError;
+
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  auto tempPath = [](const String& name) { return String(kProfilesDir) + "/." + name + ".import.tmp"; };
+  auto backupPath = [](const String& name) { return String(kProfilesDir) + "/." + name + ".import.bak"; };
+  auto cleanup = [&](bool removeBackups) {
+    for (const auto& item : profiles) {
+      LittleFS.remove(tempPath(item.first));
+      if (removeBackups) LittleFS.remove(backupPath(item.first));
+    }
+  };
+
+  for (const auto& item : profiles) {
+    const String target = profilePath(item.first);
+    const String backup = backupPath(item.first);
+    LittleFS.remove(tempPath(item.first));
+    if (LittleFS.exists(backup)) {
+      if (LittleFS.exists(target)) {
+        LittleFS.remove(backup);
+      } else if (!LittleFS.rename(backup, target)) {
+        lastError_ = "Failed to recover interrupted profile import";
+        xSemaphoreGive(mutex_);
+        return Result::IoError;
+      }
+    }
+  }
+
+  const size_t totalBytes = LittleFS.totalBytes();
+  const size_t usedBytes = LittleFS.usedBytes();
+  const size_t freeBytes = totalBytes > usedBytes ? totalBytes - usedBytes : 0;
+  if (freeBytes < stagedBytes + AppLimits::kFilesystemReserveBytes) {
+    lastError_ = "Not enough LittleFS space for atomic import";
+    xSemaphoreGive(mutex_);
+    return Result::NoSpace;
+  }
+
+  for (size_t i = 0; i < profiles.size(); ++i) {
+    File staged = LittleFS.open(tempPath(profiles[i].first), FILE_WRITE);
+    if (!staged || staged.print(profiles[i].second) != profiles[i].second.length()) {
+      if (staged) staged.close();
+      cleanup(false);
+      lastError_ = "Failed to stage imported profiles";
+      xSemaphoreGive(mutex_);
+      return Result::IoError;
+    }
+    staged.close();
+  }
+
+  size_t committed = 0;
+  bool ok = true;
+  for (size_t i = 0; i < profiles.size(); ++i) {
+    const String target = profilePath(profiles[i].first);
+    const String backup = backupPath(profiles[i].first);
+    if (LittleFS.exists(target) && !LittleFS.rename(target, backup)) {
+      ok = false;
+      break;
+    }
+    if (!LittleFS.rename(tempPath(profiles[i].first), target)) {
+      if (LittleFS.exists(backup)) LittleFS.rename(backup, target);
+      ok = false;
+      break;
+    }
+    ++committed;
+  }
+
+  if (ok) {
+    for (size_t i = 0; i < profiles.size(); ++i) {
+      File file = LittleFS.open(profilePath(profiles[i].first), FILE_READ);
+      if (!file || file.size() != profiles[i].second.length()) ok = false;
+      if (file) file.close();
+      if (!ok) break;
+    }
+  }
+
+  if (!ok) {
+    for (size_t i = 0; i < committed; ++i) LittleFS.remove(profilePath(profiles[i].first));
+    for (size_t i = 0; i < profiles.size(); ++i) {
+      const String backup = backupPath(profiles[i].first);
+      if (LittleFS.exists(backup)) LittleFS.rename(backup, profilePath(profiles[i].first));
+    }
+    cleanup(false);
+    lastError_ = "Atomic profile import failed and was rolled back";
+    xSemaphoreGive(mutex_);
+    return Result::IoError;
+  }
+
+  cleanup(true);
+  lastError_ = "";
+  xSemaphoreGive(mutex_);
+  return Result::Ok;
+}
+
+String StorageService::lastError() const {
+  if (!mutex_) return "Storage is not initialized";
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  const String error = lastError_;
+  xSemaphoreGive(mutex_);
+  return error;
+}
+
 bool StorageService::isValidName(const String& name) {
-  if (name.isEmpty()) {
+  if (name.isEmpty() || name.length() > AppLimits::kMaxNameLength) {
     return false;
   }
   for (size_t i = 0; i < name.length(); ++i) {
@@ -333,10 +509,11 @@ bool StorageService::isValidName(const String& name) {
 }
 
 bool StorageService::ensureProfilesDir() {
+  xSemaphoreTake(mutex_, portMAX_DELAY);
   if (!fsReady_) {
+    xSemaphoreGive(mutex_);
     return false;
   }
-  xSemaphoreTake(mutex_, portMAX_DELAY);
   const bool exists = LittleFS.exists(kProfilesDir);
   const bool ok = exists || LittleFS.mkdir(kProfilesDir);
   xSemaphoreGive(mutex_);

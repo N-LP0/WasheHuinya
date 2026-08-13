@@ -43,6 +43,11 @@ const macroCommandSuggestions = [
   'RELEASEALL',
 ];
 const macroIndent = '  ';
+const maxMacroScriptBytes = 32 * 1024;
+const maxMacroDelayMs = 86400000;
+const maxMacroRepeat = 100000000;
+const maxMacroMove = 32767;
+const maxMacroScroll = 10000;
 const macroMouseSuggestions = [
   'MOVE ',
   'WHEEL ',
@@ -329,8 +334,9 @@ function validateMacroLine(line) {
   }
 
   if (cmd === 'DELAY' || cmd === 'WAIT') {
-    if (args.length !== 1 || !isIntegerToken(args[0]) || Number.parseInt(args[0], 10) < 0) {
-      return `${cmd} requires one non-negative integer`;
+    const delay = Number.parseInt(args[0], 10);
+    if (args.length !== 1 || !isIntegerToken(args[0]) || delay < 0 || delay > maxMacroDelayMs) {
+      return `${cmd} requires one integer from 0 to ${maxMacroDelayMs}`;
     }
     return '';
   }
@@ -340,8 +346,9 @@ function validateMacroLine(line) {
   }
 
   if (cmd === 'REPEAT') {
-    if (args.length !== 1 || !isIntegerToken(args[0]) || Number.parseInt(args[0], 10) <= 0) {
-      return 'REPEAT requires one positive integer';
+    const repeat = Number.parseInt(args[0], 10);
+    if (args.length !== 1 || !isIntegerToken(args[0]) || repeat <= 0 || repeat > maxMacroRepeat) {
+      return `REPEAT requires one integer from 1 to ${maxMacroRepeat}`;
     }
     return '';
   }
@@ -357,19 +364,27 @@ function validateMacroLine(line) {
       return 'MOUSE requires MOVE, WHEEL, SCROLL, PAN, HWHEEL, CLICK, PRESS or RELEASE';
     }
     if (sub === 'MOVE') {
+      const x = Number.parseInt(rest[0], 10);
+      const y = Number.parseInt(rest[1], 10);
       if (
         (rest.length !== 2 && rest.length !== 3) ||
         !isIntegerToken(rest[0]) ||
         !isIntegerToken(rest[1]) ||
-        (rest.length === 3 && (!isIntegerToken(rest[2]) || Number.parseInt(rest[2], 10) < 0))
+        (rest.length === 3 &&
+          (!isIntegerToken(rest[2]) ||
+            Number.parseInt(rest[2], 10) < 0 ||
+            Number.parseInt(rest[2], 10) > 12)) ||
+        Math.abs(x) > maxMacroMove ||
+        Math.abs(y) > maxMacroMove
       ) {
-        return 'MOUSE MOVE requires X, Y and optional non-negative jitter';
+        return `MOUSE MOVE requires X/Y from -${maxMacroMove} to ${maxMacroMove} and optional jitter 0..12`;
       }
       return '';
     }
     if (sub === 'WHEEL' || sub === 'SCROLL' || sub === 'PAN' || sub === 'HWHEEL') {
-      if (rest.length !== 1 || !isIntegerToken(rest[0])) {
-        return `MOUSE ${sub} requires one integer`;
+      const amount = Number.parseInt(rest[0], 10);
+      if (rest.length !== 1 || !isIntegerToken(rest[0]) || Math.abs(amount) > maxMacroScroll) {
+        return `MOUSE ${sub} requires one integer from -${maxMacroScroll} to ${maxMacroScroll}`;
       }
       return '';
     }
@@ -390,6 +405,9 @@ function validateMacroLine(line) {
 
 function validateMacroScript() {
   const script = document.getElementById('script').value;
+  if (new TextEncoder().encode(script).length > maxMacroScriptBytes) {
+    return { ok: false, line: 0, message: 'Macro script exceeds 32 KiB' };
+  }
   const lines = script.split('\n');
   const stack = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -556,6 +574,9 @@ function syncProfiles(data) {
   const prev = select.value;
   const profiles = data.profiles || [];
   const options = ['', ...profiles];
+  const currentProfile = data.busy && profiles.includes(data.currentProfile)
+    ? data.currentProfile
+    : '';
 
   if (!sameOptions(select, options)) {
     select.innerHTML = '';
@@ -573,6 +594,8 @@ function syncProfiles(data) {
 
   if (profileSelectionTouched && [...select.options].some((option) => option.value === prev)) {
     select.value = prev;
+  } else if (currentProfile) {
+    select.value = currentProfile;
   } else if (data.defaultProfile && [...select.options].some((option) => option.value === data.defaultProfile)) {
     select.value = data.defaultProfile;
   } else {
@@ -644,6 +667,9 @@ async function importProfilesFromFile(file) {
   if (!file) {
     return;
   }
+  if (file.size > 256 * 1024) {
+    throw new Error('Import file exceeds 256 KiB');
+  }
 
   const text = await file.text();
   const payload = JSON.parse(text);
@@ -651,6 +677,10 @@ async function importProfilesFromFile(file) {
   if (!Array.isArray(profiles) || profiles.length === 0) {
     throw new Error('Import file must contain a non-empty profiles array');
   }
+  if (profiles.length > 64) {
+    throw new Error('Import file contains more than 64 profiles');
+  }
+  const importedNames = new Set();
   profiles.forEach((profile, index) => {
     const error = validateTokenNameValue(profile?.name || '', `Imported profile ${index + 1} name`);
     if (error) {
@@ -659,6 +689,13 @@ async function importProfilesFromFile(file) {
     if (typeof profile?.script !== 'string') {
       throw new Error(`Imported profile ${index + 1} script must be a string`);
     }
+    if (new TextEncoder().encode(profile.script).length > maxMacroScriptBytes) {
+      throw new Error(`Imported profile ${index + 1} script exceeds 32 KiB`);
+    }
+    if (importedNames.has(profile.name)) {
+      throw new Error(`Imported profile name is duplicated: ${profile.name}`);
+    }
+    importedNames.add(profile.name);
   });
   await postJson('api/profile/import', payload);
   await refresh();

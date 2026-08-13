@@ -41,6 +41,8 @@ class GpioService {
   InterruptSlot slots_[kMaxBindings];
   volatile bool pending_[kMaxBindings] = {};
   volatile TickType_t lastChangeTick_[kMaxBindings] = {};
+  volatile bool interruptsEnabled_ = false;
+  volatile size_t isrBindingCount_ = 0;
   bool stablePressed_[kMaxBindings] = {};
   size_t bindingCount_ = 0;
   int8_t activeIndex_ = -1;

@@ -72,6 +72,7 @@
           <label for="name">Profile name</label>
           <input
             id="name"
+            maxlength="64"
             placeholder="new_profile"
             autocomplete="off"
             pattern="[A-Za-z0-9_\-]+"
@@ -247,6 +248,7 @@
             <label for="host">Hostname</label>
             <input
               id="host"
+              maxlength="64"
               placeholder="hidpad-s3"
               autocomplete="off"
               pattern="[A-Za-z0-9_\-]*"
@@ -533,6 +535,10 @@
 
           <section class="panel update-actions-panel">
             <h2>Update session</h2>
+            <div class="update-power-warning" role="alert">
+              Do not disconnect power or reset the device while an update is uploading, verifying, committing,
+              or rolling back.
+            </div>
             <button id="uploadBundleBtn" class="button-warning" type="button">Update firmware + filesystem</button>
             <div id="bundleStatus" class="upload-status field-hidden"></div>
           </section>
@@ -619,17 +625,17 @@ LINE KEY ENTER</pre>
             <dt>TEXT / TYPE</dt>
             <dd>Print text as keyboard input.</dd>
             <dt>DELAY / WAIT</dt>
-            <dd>Pause execution for milliseconds.</dd>
+            <dd>Pause for 0..86400000 milliseconds.</dd>
             <dt>KEY / HOTKEY</dt>
             <dd>Press a key or key combination. Common names and aliases include CTRL, CONTROL, ALT, SHIFT, GUI, WIN, CMD, ENTER, RETURN, ESC, ESCAPE, TAB, BACKSPACE, DELETE, DEL, INSERT and INS.</dd>
             <dt>REPEAT / LOOP / END</dt>
-            <dd>Repeat a block a fixed number of times or forever until Stop.</dd>
+            <dd>Repeat 1..100000000 times or forever until Stop. Fast loops yield after 64 instructions.</dd>
             <dt>MOUSE MOVE</dt>
-            <dd>Move pointer by X/Y pixels. Movement is pre-shaped to compensate typical OS pointer acceleration; optional third value bends the path into a smooth arc.</dd>
+            <dd>Move by X/Y in -32767..32767. Optional third value bends the path into a smooth arc.</dd>
             <dt>MOUSE WHEEL / SCROLL</dt>
-            <dd>Scroll vertical wheel by signed steps.</dd>
+            <dd>Scroll vertically by -10000..10000 signed steps.</dd>
             <dt>MOUSE PAN / HWHEEL</dt>
-            <dd>Scroll horizontal wheel by signed steps.</dd>
+            <dd>Scroll horizontally by -10000..10000 signed steps.</dd>
             <dt>MOUSE CLICK / PRESS / RELEASE</dt>
             <dd>Control LEFT, RIGHT, MIDDLE, WHEEL or MBUTTON mouse button.</dd>
             <dt>RELEASEALL</dt>

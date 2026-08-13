@@ -1,10 +1,15 @@
 #include "WebApiServer.h"
 
+#include "AppLimits.h"
+
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <utility>
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <esp_ota_ops.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/sha1.h>
 
@@ -13,7 +18,26 @@ namespace {
 #define HIDPAD_FIRMWARE_VERSION "dev"
 #endif
 constexpr char kFirmwareVersion[] = HIDPAD_FIRMWARE_VERSION;
-const char* kCollectedHeaders[] = {"X-TTY-Token", "X-Update-Size", "X-Restart-After-Update"};
+const char* kCollectedHeaders[] = {
+    "X-TTY-Token",
+    "X-Update-Size",
+    "X-Update-SHA256",
+    "X-Restart-After-Update",
+    "X-Bundle-ID",
+};
+
+bool parseSizeHeader(const String& value, size_t& size) {
+  if (value.isEmpty()) return false;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long parsed = strtoul(value.c_str(), &end, 10);
+  if (errno == ERANGE || end == value.c_str() || *end != '\0' || parsed == 0 ||
+      parsed > SIZE_MAX) {
+    return false;
+  }
+  size = static_cast<size_t>(parsed);
+  return true;
+}
 }
 
 WebApiServer::WebApiServer(StorageService& storage,
@@ -143,6 +167,7 @@ void WebApiServer::streamFile(const char* path, const char* mimeType) {
     return;
   }
 
+  server_.sendHeader("Cache-Control", "public, max-age=60");
   server_.streamFile(file, mimeType);
   file.close();
 }
@@ -351,12 +376,58 @@ void WebApiServer::handleUpdateUpload(UpdateService::UpdateType type) {
     updateUploadStarted_ = true;
     updateUploadFailed_ = false;
     updateUploadError_ = "";
+    updateRollbackPerformed_ = false;
+    updateBelongsToBundle_ = false;
 
-    const size_t expectedSize = strtoul(server_.header("X-Update-Size").c_str(), nullptr, 10);
-    if (!update_.begin(type, expectedSize)) {
+    size_t expectedSize = 0;
+    if (!parseSizeHeader(server_.header("X-Update-Size"), expectedSize)) {
+      updateUploadFailed_ = true;
+      updateUploadError_ = "X-Update-Size is invalid";
+      return;
+    }
+    const String expectedSha256 = server_.header("X-Update-SHA256");
+    const String bundleId = server_.header("X-Bundle-ID");
+    if (!bundleId.isEmpty() && !StorageService::isValidName(bundleId)) {
+      updateUploadFailed_ = true;
+      updateUploadError_ = "Bundle transaction ID is invalid";
+      return;
+    }
+
+    if (type == UpdateService::UpdateType::Firmware && !bundleId.isEmpty()) {
+      if (!activeBundleId_.isEmpty() && activeBundleId_ != bundleId) {
+        updateUploadFailed_ = true;
+        updateUploadError_ = "Another bundle transaction is pending";
+        return;
+      }
+      activeBundleId_ = bundleId;
+      previousBootPartition_ = esp_ota_get_boot_partition();
+      updateBelongsToBundle_ = true;
+    } else if (type == UpdateService::UpdateType::Firmware && !activeBundleId_.isEmpty()) {
+      updateUploadFailed_ = true;
+      updateUploadError_ = "Pending bundle must finish or fail before another firmware update";
+      return;
+    } else if (type == UpdateService::UpdateType::Filesystem && !bundleId.isEmpty() &&
+               (activeBundleId_.isEmpty() || activeBundleId_ != bundleId)) {
+      updateUploadFailed_ = true;
+      updateUploadError_ = "Bundle transaction ID does not match pending firmware";
+      return;
+    } else if (type == UpdateService::UpdateType::Filesystem && !bundleId.isEmpty()) {
+      updateBelongsToBundle_ = true;
+    } else if (type == UpdateService::UpdateType::Filesystem && !activeBundleId_.isEmpty()) {
+      updateUploadFailed_ = true;
+      updateUploadError_ = "Pending bundle requires its transaction ID";
+      return;
+    }
+
+    if (!update_.begin(type, expectedSize, expectedSha256)) {
       updateUploadFailed_ = true;
       updateUploadError_ = update_.progress().errorMessage;
       update_.abort(updateUploadError_);
+      if (type == UpdateService::UpdateType::Filesystem && updateBelongsToBundle_) {
+        rollbackBundle(updateUploadError_);
+      } else if (type == UpdateService::UpdateType::Firmware && updateBelongsToBundle_) {
+        clearBundleTransaction();
+      }
       return;
     }
 
@@ -373,6 +444,11 @@ void WebApiServer::handleUpdateUpload(UpdateService::UpdateType type) {
       updateUploadFailed_ = true;
       updateUploadError_ = update_.progress().errorMessage;
       update_.abort(updateUploadError_);
+      if (type == UpdateService::UpdateType::Filesystem && updateBelongsToBundle_) {
+        rollbackBundle(updateUploadError_);
+      } else if (type == UpdateService::UpdateType::Firmware && updateBelongsToBundle_) {
+        clearBundleTransaction();
+      }
     }
     return;
   }
@@ -385,6 +461,11 @@ void WebApiServer::handleUpdateUpload(UpdateService::UpdateType type) {
       updateUploadFailed_ = true;
       updateUploadError_ = update_.progress().errorMessage;
       update_.abort(updateUploadError_);
+      if (type == UpdateService::UpdateType::Filesystem && updateBelongsToBundle_) {
+        rollbackBundle(updateUploadError_);
+      } else if (type == UpdateService::UpdateType::Firmware && updateBelongsToBundle_) {
+        clearBundleTransaction();
+      }
     }
     return;
   }
@@ -393,6 +474,11 @@ void WebApiServer::handleUpdateUpload(UpdateService::UpdateType type) {
     updateUploadFailed_ = true;
     updateUploadError_ = "Upload aborted";
     update_.abort(updateUploadError_);
+    if (type == UpdateService::UpdateType::Filesystem && updateBelongsToBundle_) {
+      rollbackBundle(updateUploadError_);
+    } else if (type == UpdateService::UpdateType::Firmware && updateBelongsToBundle_) {
+      clearBundleTransaction();
+    }
   }
 }
 
@@ -413,17 +499,42 @@ void WebApiServer::handleUpdateDone(const char* label) {
   doc["ok"] = true;
   JsonObject data = doc["data"].to<JsonObject>();
   const bool restartAfterUpdate = server_.header("X-Restart-After-Update") != "0";
-  data["message"] = String(label) + " updated." + (restartAfterUpdate ? " Device will restart." : "");
-  data["restart"] = restartAfterUpdate;
+  const bool filesystemUpdate = String(label) == "Filesystem";
+  const bool mustRestart = filesystemUpdate || restartAfterUpdate;
+  data["message"] = String(label) + " updated." + (mustRestart ? " Device will restart." : "");
+  data["restart"] = mustRestart;
+  data["verified"] = true;
+  data["sha256"] = update_.progress().sha256;
 
   String json;
   serializeJson(doc, json);
   server_.send(200, "application/json", json);
 
-  cmd_.appendLog(String(label) + " update completed" + (restartAfterUpdate ? ", restarting" : ""));
-  if (restartAfterUpdate) {
+  cmd_.appendLog(String(label) + " update completed" + (mustRestart ? ", restarting" : ""));
+  if (filesystemUpdate) clearBundleTransaction();
+  if (mustRestart) {
     scheduleRestart();
   }
+}
+
+bool WebApiServer::rollbackBundle(const String& reason) {
+  if (activeBundleId_.isEmpty() || previousBootPartition_ == nullptr) return false;
+  const esp_err_t result = esp_ota_set_boot_partition(previousBootPartition_);
+  updateRollbackPerformed_ = result == ESP_OK;
+  if (updateRollbackPerformed_) {
+    updateUploadError_ = reason + "; previous boot partition restored";
+    cmd_.appendLog("bundle update rolled back to previous boot partition", "WARN");
+  } else {
+    updateUploadError_ = reason + "; boot partition rollback failed: " + esp_err_to_name(result);
+    cmd_.appendLog(updateUploadError_, "ERROR");
+  }
+  clearBundleTransaction();
+  return updateRollbackPerformed_;
+}
+
+void WebApiServer::clearBundleTransaction() {
+  activeBundleId_ = "";
+  previousBootPartition_ = nullptr;
 }
 
 void WebApiServer::scheduleRestart() {
@@ -700,7 +811,17 @@ void WebApiServer::handleProfileSave() {
     sendJsonError(400, "invalid_profile_name", "Profile name is required");
     return;
   }
+  if (script.length() > AppLimits::kMaxScriptBytes) {
+    sendJsonError(413, "script_too_large", "Macro script exceeds 32 KiB");
+    return;
+  }
   if (!storage_.saveProfile(name, script)) {
+    const String error = storage_.lastError();
+    cmd_.appendLog(String("profile save failed: ") + error, "ERROR");
+    if (error.startsWith("Not enough")) {
+      sendJsonError(507, "filesystem_full", error.c_str());
+      return;
+    }
     sendJsonError(500, "profile_save_failed", "Profile save failed");
     return;
   }
@@ -733,6 +854,10 @@ void WebApiServer::handleProfileImport() {
     sendJsonError(400, "empty_import", "Import payload is empty");
     return;
   }
+  if (body.length() > AppLimits::kMaxImportBytes) {
+    sendJsonError(413, "import_too_large", "Import payload exceeds 256 KiB");
+    return;
+  }
 
   JsonDocument doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) {
@@ -751,6 +876,10 @@ void WebApiServer::handleProfileImport() {
     sendJsonError(400, "invalid_import_profiles", "Import payload must contain profiles array");
     return;
   }
+  if (profiles.size() > AppLimits::kMaxImportProfiles) {
+    sendJsonError(413, "too_many_profiles", "Import contains more than 64 profiles");
+    return;
+  }
 
   std::vector<std::pair<String, String>> imported;
   for (JsonObject item : profiles) {
@@ -758,6 +887,10 @@ void WebApiServer::handleProfileImport() {
     const String script = String(item["script"] | "");
     if (!StorageService::isValidName(name)) {
       sendJsonError(400, "invalid_profile_name", "Imported profile name is invalid");
+      return;
+    }
+    if (script.length() > AppLimits::kMaxScriptBytes) {
+      sendJsonError(413, "script_too_large", "Imported macro script exceeds 32 KiB");
       return;
     }
     imported.push_back({name, script});
@@ -768,11 +901,20 @@ void WebApiServer::handleProfileImport() {
     return;
   }
 
-  for (const auto& item : imported) {
-    if (!storage_.saveProfile(item.first, item.second)) {
-      sendJsonError(500, "profile_import_failed", "Profile import failed");
-      return;
+  const StorageService::Result result = storage_.importProfilesAtomic(imported);
+  if (result != StorageService::Result::Ok) {
+    const String error = storage_.lastError();
+    cmd_.appendLog(String("profile import failed: ") + error, "ERROR");
+    if (result == StorageService::Result::NoSpace) {
+      sendJsonError(507, "filesystem_full", error.c_str());
+    } else if (result == StorageService::Result::TooLarge) {
+      sendJsonError(413, "script_too_large", "Imported macro script exceeds 32 KiB");
+    } else if (result == StorageService::Result::Invalid) {
+      sendJsonError(400, "invalid_import_profiles", "Import contains invalid or duplicate profiles");
+    } else {
+      sendJsonError(500, "profile_import_failed", error.c_str());
     }
+    return;
   }
 
   cmd_.appendLog(String("profiles imported: ") + imported.size());
@@ -800,6 +942,7 @@ void WebApiServer::handleProfileDelete() {
                  bindings.end());
   if (bindings.size() != before) {
     if (!storage_.saveGpioBindings(bindings)) {
+      cmd_.appendLog(String("GPIO cleanup save failed: ") + storage_.lastError(), "ERROR");
       sendJsonError(500, "gpio_save_failed", "GPIO bindings save failed");
       return;
     }
@@ -810,7 +953,11 @@ void WebApiServer::handleProfileDelete() {
   DeviceConfig cfg = storage_.loadConfig();
   if (cfg.defaultProfile == name) {
     cfg.defaultProfile = "";
-    storage_.saveConfig(cfg);
+    if (!storage_.saveConfig(cfg)) {
+      cmd_.appendLog(String("default profile clear failed: ") + storage_.lastError(), "ERROR");
+      sendJsonError(500, "config_save_failed", "Default profile could not be cleared");
+      return;
+    }
     cmd_.appendLog(String("default profile cleared: ") + name);
   }
 
@@ -871,6 +1018,10 @@ void WebApiServer::handleRunScript() {
     sendJsonError(400, "empty_script", "Macro script is empty");
     return;
   }
+  if (script.length() > AppLimits::kMaxScriptBytes) {
+    sendJsonError(413, "script_too_large", "Macro script exceeds 32 KiB");
+    return;
+  }
   if (!macro_.start(name, script)) {
     sendJsonError(409, "macro_busy", "Macro engine is busy");
     return;
@@ -921,6 +1072,7 @@ void WebApiServer::handleWifiSave() {
   }
 
   if (!storage_.saveConfig(cfg)) {
+    cmd_.appendLog(String("config save failed: ") + storage_.lastError(), "ERROR");
     sendJsonError(500, "config_save_failed", "Configuration save failed");
     return;
   }
@@ -942,6 +1094,7 @@ void WebApiServer::handleWifiReset() {
   cfg.wifiPassword = "";
 
   if (!storage_.saveConfig(cfg)) {
+    cmd_.appendLog(String("config save failed: ") + storage_.lastError(), "ERROR");
     sendJsonError(500, "config_save_failed", "Configuration save failed");
     return;
   }
@@ -967,6 +1120,7 @@ void WebApiServer::handleBleSave() {
   cfg.hidTransport = transport;
   cfg.bleMode = mode;
   if (!storage_.saveConfig(cfg)) {
+    cmd_.appendLog(String("BLE config save failed: ") + storage_.lastError(), "ERROR");
     sendJsonError(500, "config_save_failed", "BLE configuration save failed");
     return;
   }
@@ -1061,6 +1215,7 @@ void WebApiServer::handleGpioSave() {
   }
 
   if (!storage_.saveGpioBindings(bindings)) {
+    cmd_.appendLog(String("GPIO save failed: ") + storage_.lastError(), "ERROR");
     sendJsonError(500, "gpio_save_failed", "GPIO bindings save failed");
     return;
   }
@@ -1097,6 +1252,7 @@ void WebApiServer::handleGpioDelete() {
                  bindings.end());
 
   if (!storage_.saveGpioBindings(bindings)) {
+    cmd_.appendLog(String("GPIO delete failed: ") + storage_.lastError(), "ERROR");
     sendJsonError(500, "gpio_delete_failed", "GPIO binding delete failed");
     return;
   }
@@ -1135,6 +1291,8 @@ void WebApiServer::handleUpdateProgress() {
   data["type"] = progress.type == UpdateService::UpdateType::Firmware ? "firmware" : "filesystem";
   data["totalSize"] = static_cast<uint32_t>(progress.totalSize);
   data["writtenSize"] = static_cast<uint32_t>(progress.writtenSize);
+  data["stage"] = progress.stage;
+  data["sha256"] = progress.sha256;
   data["percentage"] = progress.totalSize > 0
                            ? static_cast<uint8_t>((progress.writtenSize * 100) / progress.totalSize)
                            : 0;

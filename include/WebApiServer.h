@@ -2,6 +2,7 @@
 
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_partition.h>
 
 #include "AppConfig.h"
 #include "BleHidService.h"
@@ -42,6 +43,8 @@ class WebApiServer {
   bool authorizeTtyRequest();
   void handleUpdateUpload(UpdateService::UpdateType type);
   void handleUpdateDone(const char* label);
+  bool rollbackBundle(const String& reason);
+  void clearBundleTransaction();
   void scheduleRestart();
   void sendJsonOk();
   void sendJsonProfile(const String& name, const String& script);
@@ -91,6 +94,10 @@ class WebApiServer {
   bool updateUploadStarted_ = false;
   bool updateUploadFailed_ = false;
   String updateUploadError_;
+  String activeBundleId_;
+  const esp_partition_t* previousBootPartition_ = nullptr;
+  bool updateRollbackPerformed_ = false;
+  bool updateBelongsToBundle_ = false;
   bool restartPending_ = false;
   uint32_t restartAtMs_ = 0;
 };

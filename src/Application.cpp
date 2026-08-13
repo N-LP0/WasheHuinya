@@ -63,6 +63,7 @@ bool init() {
     Serial.println("Storage init failed");
     return false;
   }
+  g_update.init(g_storage);
   Serial.println(g_storage.filesystemReady() ? "Storage ready" : "Storage filesystem unavailable");
   logHeap("storage");
 
