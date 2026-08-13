@@ -79,14 +79,13 @@ bool UpdateService::write(const uint8_t* data, size_t length) {
 
   const size_t written = Update.write(const_cast<uint8_t*>(data), length);
   if (written != length) {
-    progress_.inProgress = false;
-    progress_.errorMessage = Update.errorString();
+    const String error = Update.errorString();
+    abort(error);
     return false;
   }
 
   if (!sha256Active_ || mbedtls_sha256_update_ret(&sha256Context_, data, length) != 0) {
-    progress_.inProgress = false;
-    progress_.errorMessage = "SHA-256 calculation failed";
+    abort("SHA-256 calculation failed");
     return false;
   }
   progress_.writtenSize += written;

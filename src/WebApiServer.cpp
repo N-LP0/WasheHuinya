@@ -167,7 +167,7 @@ void WebApiServer::streamFile(const char* path, const char* mimeType) {
     return;
   }
 
-  server_.sendHeader("Cache-Control", "public, max-age=60");
+  server_.sendHeader("Cache-Control", "no-store");
   server_.streamFile(file, mimeType);
   file.close();
 }
